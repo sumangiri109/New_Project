@@ -337,6 +337,7 @@ class InfoCard extends StatelessWidget {
 }
 
 // ---------------------- CALCULATE EXTRA PAYMENT SECTION ----------------------
+
 class CalculateExtraPaymentSection extends StatefulWidget {
   const CalculateExtraPaymentSection({super.key});
 
@@ -347,13 +348,16 @@ class CalculateExtraPaymentSection extends StatefulWidget {
 
 class _CalculateExtraPaymentSectionState
     extends State<CalculateExtraPaymentSection> {
-  double wage = 500000;
   double monthlySalary = 100000;
+  int loanMonths = 12;
 
-  double get interestRate => 0.02;
-  double get totalRepayment => wage + (wage * interestRate);
-  int get months => (wage / monthlySalary).ceil();
-  double get monthlyPayment => totalRepayment / months;
+  double get cutRate => 0.02;
+
+  // Eligible loan per month = salary - 2%
+  double get eligibleLoan => monthlySalary * (1 - cutRate);
+
+  // Total loan = eligibleLoan × duration
+  double get totalLoan => eligibleLoan * loanMonths;
 
   @override
   Widget build(BuildContext context) {
@@ -384,42 +388,16 @@ class _CalculateExtraPaymentSectionState
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Calculate your Pay',
+                      'Calculate Your Loan Eligibility',
                       style: GoogleFonts.workSans(
-                        fontSize: 50,
+                        fontSize: 40,
                         fontWeight: FontWeight.bold,
                         color: Colors.white,
                       ),
                     ),
                     const SizedBox(height: 40),
 
-                    Text(
-                      'Enter advance amount (रु):',
-                      style: GoogleFonts.workSans(
-                        fontSize: 27,
-                        fontWeight: FontWeight.w600,
-                        color: Colors.white,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    TextFormField(
-                      initialValue: wage.toStringAsFixed(0),
-                      keyboardType: TextInputType.number,
-                      onChanged: (value) =>
-                          setState(() => wage = double.tryParse(value) ?? wage),
-                      decoration: InputDecoration(
-                        filled: true,
-                        fillColor: Colors.white,
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                        ),
-                      ),
-                    ),
-
-                    const SizedBox(height: 20),
+                    // Monthly Salary Input
                     Text(
                       'Enter your monthly salary (रु):',
                       style: GoogleFonts.workSans(
@@ -448,9 +426,41 @@ class _CalculateExtraPaymentSectionState
                       ),
                     ),
 
-                    const SizedBox(height: 30),
+                    const SizedBox(height: 20),
+
+                    // Loan Duration Input
                     Text(
-                      'Monthly payment for $months month(s):',
+                      'Enter loan duration (months):',
+                      style: GoogleFonts.workSans(
+                        fontSize: 27,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.white,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    TextFormField(
+                      initialValue: loanMonths.toString(),
+                      keyboardType: TextInputType.number,
+                      onChanged: (value) => setState(
+                        () => loanMonths = int.tryParse(value) ?? loanMonths,
+                      ),
+                      decoration: InputDecoration(
+                        filled: true,
+                        fillColor: Colors.white,
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                        ),
+                      ),
+                    ),
+
+                    const SizedBox(height: 30),
+
+                    // Eligible Loan Display
+                    Text(
+                      'Your Eligible Loan per Month :',
                       style: GoogleFonts.workSans(
                         fontSize: 24,
                         fontWeight: FontWeight.w600,
@@ -459,7 +469,7 @@ class _CalculateExtraPaymentSectionState
                     ),
                     const SizedBox(height: 8),
                     Text(
-                      'रु ${monthlyPayment.toStringAsFixed(2)} per month',
+                      'रु ${eligibleLoan.toStringAsFixed(2)}',
                       style: GoogleFonts.workSans(
                         fontSize: 32,
                         fontWeight: FontWeight.bold,
@@ -468,8 +478,10 @@ class _CalculateExtraPaymentSectionState
                     ),
 
                     const SizedBox(height: 20),
+
+                    // Total Loan Display
                     Text(
-                      'Total repayment (2% interest included):',
+                      'Your Total Loan Amount :',
                       style: GoogleFonts.workSans(
                         fontSize: 24,
                         fontWeight: FontWeight.w600,
@@ -478,7 +490,7 @@ class _CalculateExtraPaymentSectionState
                     ),
                     const SizedBox(height: 8),
                     Text(
-                      'रु ${totalRepayment.toStringAsFixed(2)}',
+                      'रु ${totalLoan.toStringAsFixed(2)}',
                       style: GoogleFonts.workSans(
                         fontSize: 32,
                         fontWeight: FontWeight.bold,
