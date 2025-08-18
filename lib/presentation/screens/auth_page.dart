@@ -1,14 +1,12 @@
-// lib/auth_page.dart
+// lib/presentation/screens/auth_page.dart
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:loan_project/core/services/auth_page_services.dart';
 import 'package:loan_project/presentation/screens/admin_dashboard.dart';
 import 'package:loan_project/presentation/screens/user_dashboard.dart';
 
 /// =====================
 /// Auth UI (Login / Register / Admin Login)
-/// - Register page no longer asks monthly salary or phone.
-/// - Admin login is a separate page.
-/// - This file is UI-only; backend/services will be added later.
 /// =====================
 
 class AppColors {
@@ -46,7 +44,6 @@ InputDecoration customInputDecoration({
 
 String? emailValidator(String? value) {
   if (value == null || value.trim().isEmpty) return 'Please enter your email';
-  // stable email regex
   if (!RegExp(r'^[\w\-.]+@([\w-]+\.)+[\w-]{2,4}$').hasMatch(value.trim())) {
     return 'Please enter a valid email';
   }
@@ -113,7 +110,7 @@ Widget authRightPanel({
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 110, color: Colors.white.withOpacity(0.95)),
+          Icon(icon, size: 110, color: Colors.white),
           const SizedBox(height: 18),
           Text(
             title,
@@ -187,6 +184,8 @@ class _LoginPageState extends State<LoginPage> {
   bool _isLoading = false;
   bool _obscurePassword = true;
 
+  final _authService = AuthPageServices();
+
   @override
   void dispose() {
     _emailController.dispose();
@@ -198,28 +197,40 @@ class _LoginPageState extends State<LoginPage> {
     if (!_formKey.currentState!.validate()) return;
     setState(() => _isLoading = true);
 
-    // UI-only: simulate auth delay. Replace with AuthService later.
-    await Future.delayed(const Duration(seconds: 2));
+    final result = await _authService.signInWithEmailAndPassword(
+      email: _emailController.text.trim(),
+      password: _passwordController.text.trim(),
+    );
 
     if (!mounted) return;
+
     setState(() => _isLoading = false);
 
-    // Navigate to user dashboard (replace with real navigation)
-    Navigator.pushReplacement(
+    if (result.success) {
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (_) => const UserDashboard()),
+      );
+    } else {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(result.error ?? 'Login failed')));
+    }
+  }
+
+  void _goToRegister() {
+    Navigator.push(
       context,
-      MaterialPageRoute(builder: (_) => const UserDashboard()),
+      MaterialPageRoute(builder: (_) => const RegisterPage()),
     );
   }
 
-  void _goToRegister() => Navigator.push(
-    context,
-    MaterialPageRoute(builder: (_) => const RegisterPage()),
-  );
-
-  void _goToAdminLogin() => Navigator.push(
-    context,
-    MaterialPageRoute(builder: (_) => const AdminLoginPage()),
-  );
+  void _goToAdminLogin() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const AdminLoginPage()),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -303,9 +314,7 @@ class _LoginPageState extends State<LoginPage> {
                     Align(
                       alignment: Alignment.centerRight,
                       child: TextButton(
-                        onPressed: () {
-                          /* TODO: forgot password */
-                        },
+                        onPressed: () {},
                         child: Text(
                           'Forgot Password?',
                           style: GoogleFonts.workSans(color: AppColors.primary),
@@ -315,7 +324,7 @@ class _LoginPageState extends State<LoginPage> {
                     const SizedBox(height: 24),
                     primaryButton(
                       text: 'Sign In',
-                      onPressed: _isLoading ? null : _submit,
+                      onPressed: _submit,
                       loading: _isLoading,
                     ),
                     const SizedBox(height: 20),
@@ -335,44 +344,38 @@ class _LoginPageState extends State<LoginPage> {
                       ],
                     ),
                     const SizedBox(height: 20),
-                    SizedBox(
-                      width: double.infinity,
-                      height: 50,
-                      child: ElevatedButton(
-                        onPressed: _goToAdminLogin,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.grey.shade100,
-                          foregroundColor: Colors.grey.shade700,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                            side: BorderSide(color: Colors.grey.shade300),
-                          ),
-                          elevation: 0,
-                        ),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            const Icon(Icons.admin_panel_settings, size: 20),
-                            const SizedBox(width: 8),
-                            Text(
-                              'Admin Login',
-                              style: GoogleFonts.workSans(
-                                fontSize: 16,
-                                fontWeight: FontWeight.w600,
+                    primaryButton(
+                      text: 'Sign in with Google',
+                      onPressed: () async {
+                        setState(() => _isLoading = true);
+                        final result = await _authService.signInWithGoogle();
+                        if (!mounted) return;
+                        setState(() => _isLoading = false);
+                        if (result.success) {
+                          Navigator.pushReplacement(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => const UserDashboard(),
+                            ),
+                          );
+                        } else {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text(
+                                result.error ?? 'Google sign in failed',
                               ),
                             ),
-                          ],
-                        ),
-                      ),
+                          );
+                        }
+                      },
                     ),
-                    const SizedBox(height: 28),
+                    const SizedBox(height: 24),
                     Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
                         Text(
-                          "Don't have an account? ",
+                          'Don\'t have an account? ',
                           style: GoogleFonts.workSans(
-                            fontSize: 14,
                             color: Colors.grey.shade600,
                           ),
                         ),
@@ -381,13 +384,25 @@ class _LoginPageState extends State<LoginPage> {
                           child: Text(
                             'Sign Up',
                             style: GoogleFonts.workSans(
-                              fontSize: 14,
                               color: AppColors.primary,
                               fontWeight: FontWeight.w600,
                             ),
                           ),
                         ),
                       ],
+                    ),
+                    const SizedBox(height: 12),
+                    GestureDetector(
+                      onTap: _goToAdminLogin,
+                      child: Center(
+                        child: Text(
+                          'Admin Login',
+                          style: GoogleFonts.workSans(
+                            color: AppColors.primary,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
                     ),
                   ],
                 ),
@@ -398,22 +413,21 @@ class _LoginPageState extends State<LoginPage> {
       ),
     );
 
-    final infoPanel = authRightPanel(
-      icon: Icons.account_balance_wallet,
-      title: 'Get Your Pay Before Payday',
-      subtitle:
-          'Access up to 98% of your monthly salary\nwhenever you need it most.',
-    );
-
     return Scaffold(
       backgroundColor: Colors.white,
-      body: AuthScaffold(form: form, infoPanel: infoPanel),
+      body: AuthScaffold(
+        form: form,
+        infoPanel: authRightPanel(
+          icon: Icons.login,
+          title: 'Welcome Back',
+          subtitle: 'Sign in to continue using PayAdvance',
+        ),
+      ),
     );
   }
 }
 
 /// ===================== REGISTER PAGE =====================
-/// NOTE: removed monthly salary & phone from register form. KYC will be collected later in dashboard.
 class RegisterPage extends StatefulWidget {
   const RegisterPage({super.key});
 
@@ -427,11 +441,12 @@ class _RegisterPageState extends State<RegisterPage> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   final _confirmController = TextEditingController();
-
   bool _isLoading = false;
   bool _obscurePassword = true;
   bool _obscureConfirm = true;
   bool _acceptTerms = false;
+
+  final _authService = AuthPageServices();
 
   @override
   void dispose() {
@@ -450,25 +465,34 @@ class _RegisterPageState extends State<RegisterPage> {
       );
       return;
     }
+
     setState(() => _isLoading = true);
 
-    // Simulate registration - replace with AuthService later
-    await Future.delayed(const Duration(seconds: 2));
+    final result = await _authService.registerWithEmailAndPassword(
+      email: _emailController.text.trim(),
+      password: _passwordController.text.trim(),
+      displayName: _nameController.text.trim(),
+    );
 
     if (!mounted) return;
     setState(() => _isLoading = false);
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Account created successfully! Please sign in.'),
-        backgroundColor: Colors.green,
-      ),
-    );
-
-    Navigator.pushReplacement(
-      context,
-      MaterialPageRoute(builder: (_) => const LoginPage()),
-    );
+    if (result.success) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Account created successfully! Please sign in.'),
+          backgroundColor: Colors.green,
+        ),
+      );
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (_) => const LoginPage()),
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(result.error ?? 'Registration failed')),
+      );
+    }
   }
 
   @override
@@ -692,7 +716,6 @@ class _RegisterPageState extends State<RegisterPage> {
 }
 
 /// ===================== ADMIN LOGIN PAGE =====================
-/// Simple UI for admin sign-in. Replace with real admin auth later.
 class AdminLoginPage extends StatefulWidget {
   const AdminLoginPage({super.key});
 
@@ -720,15 +743,14 @@ class _AdminLoginPageState extends State<AdminLoginPage> {
     }
 
     setState(() => _loading = true);
-    // simulate
     await Future.delayed(const Duration(milliseconds: 700));
+    if (!mounted) return;
     setState(() => _loading = false);
 
-    // TODO: Replace this check with real admin-auth (e.g. AuthService.adminLogin)
     if (email.toLowerCase() == 'admin@payadvance.local') {
       Navigator.pushReplacement(
         context,
-        MaterialPageRoute(builder: (_) =>  const AdminDashboard()),
+        MaterialPageRoute(builder: (_) => const AdminDashboard()),
       );
     } else {
       ScaffoldMessenger.of(
