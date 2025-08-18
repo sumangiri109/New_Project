@@ -5,22 +5,20 @@
 
   <meta charset="UTF-8">
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
-  <meta name="description" content="A new Flutter project.">
+  <meta name="description" content="PayAdvance Loan Project">
 
-  <!-- iOS meta tags & icons -->
+  <!-- Mobile meta tags -->
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black">
   <meta name="apple-mobile-web-app-title" content="loan_project">
+  <meta name="mobile-web-app-capable" content="yes">
+
+  <!-- Icons -->
   <link rel="apple-touch-icon" href="icons/Icon-192.png">
-
-  <!-- Favicon -->
   <link rel="icon" type="image/png" href="favicon.png"/>
-
-  <title>loan_project</title>
   <link rel="manifest" href="manifest.json">
 
-  <!-- Google Sign-In Client ID -->
-  <meta name="google-signin-client_id" content="338090358950-ig80c6ikufeitpil9cclbdsrm0u1dpga.apps.googleusercontent.com">
+  <title>loan_project</title>
 
   <style>
     body {
@@ -28,7 +26,6 @@
       padding: 0;
       background: #ffffff;
     }
-    
     .loading {
       display: flex;
       justify-content: center;
@@ -37,7 +34,6 @@
       font-family: Arial, sans-serif;
       flex-direction: column;
     }
-
     .loading-spinner {
       border: 3px solid #f3f3f3;
       border-top: 3px solid #3498db;
@@ -47,7 +43,6 @@
       animation: spin 2s linear infinite;
       margin-bottom: 20px;
     }
-
     @keyframes spin {
       0% { transform: rotate(0deg); }
       100% { transform: rotate(360deg); }
@@ -60,6 +55,7 @@
     <div>Loading...</div>
   </div>
 
+  <!-- ✅ Firebase Config (from firebase_options.dart) -->
   <script>
     var firebaseConfig = {
       apiKey: "AIzaSyA6C0aMkf7ftn_TBRqJaS46u-t4vUScEpg",
@@ -70,14 +66,11 @@
       appId: "1:338090358950:web:62de67fe6e82e59ee75c67",
       measurementId: "G-7TPMCFNXRW"
     };
-
     window.firebaseConfig = firebaseConfig;
-    
-    console.log('Firebase Config Loaded Successfully');
-    console.log('Google Client ID Configured');
+    console.log("✅ Firebase Config Loaded");
   </script>
 
-  <!-- Firebase SDK -->
+  <!-- ✅ Firebase SDKs -->
   <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-firestore-compat.js"></script>
@@ -85,20 +78,20 @@
   <script>
     try {
       firebase.initializeApp(firebaseConfig);
-      console.log('Firebase initialized successfully');
-      console.log('Firebase Auth ready');
-      console.log('Firestore ready');
+      console.log("✅ Firebase initialized");
     } catch (error) {
-      console.error('Firebase initialization error:', error);
+      console.error("❌ Firebase initialization error:", error);
     }
   </script>
 
-  <script src="https://apis.google.com/js/platform.js" async defer></script>
+  <!-- ✅ Flutter Web engine -->
+  <script src="flutter.js" defer></script>
 
+  <!-- ✅ Flutter loader -->
   <script>
     window.addEventListener('load', function(ev) {
-      _flutter.loader.load({
-        serviceWorkerSettings: {
+      _flutter.loader.loadEntrypoint({
+        serviceWorker: {
           serviceWorkerVersion: "{{flutter_service_worker_version}}"
         },
         onEntrypointLoaded: function(engineInitializer) {

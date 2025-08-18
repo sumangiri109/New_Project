@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:file_picker/file_picker.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+
+import '../../core/models/loan_model.dart';
 
 class UserDashboard extends StatefulWidget {
   const UserDashboard({super.key});
@@ -12,73 +15,94 @@ class UserDashboard extends StatefulWidget {
 class _UserDashboardState extends State<UserDashboard> {
   int _selectedIndex = 0;
 
-  // Sample user data
-  final Map<String, dynamic> userData = {
-    'name': 'Ramesh Sharma',
-    'monthlySalary': 75000.0,
-    'currentLoan': 147000.0,
-    'loanDuration': 2,
-    'remainingMonths': 1,
-    'eligibleAmount': 73500.0,
-    'nextDeductionDate': '2025-09-01',
-    'loanStatus': 'active',
-  };
+  Map<String, dynamic>? userData;
+  List<LoanModel> _loans = [];
+  bool _loading = true;
 
-  final List<Map<String, dynamic>> notifications = [
-    {
-      'type': 'reminder',
-      'title': 'Salary Deduction Scheduled',
-      'message': 'Your salary deduction is scheduled for Sep 1, 2025',
-      'time': '2 hours ago',
-      'icon': Icons.schedule,
-      'color': Colors.orange,
-    },
-    {
-      'type': 'tip',
-      'title': 'Financial Tip',
-      'message': 'Track your expenses to improve financial health',
-      'time': '1 day ago',
-      'icon': Icons.lightbulb_outline,
-      'color': Colors.blue,
-    },
-    {
-      'type': 'success',
-      'title': 'Loan Approved',
-      'message': 'Your loan of रु 1,47,000 has been approved successfully',
-      'time': '3 days ago',
-      'icon': Icons.check_circle_outline,
-      'color': Colors.green,
-    },
-  ];
+  @override
+  void initState() {
+    super.initState();
+    _loadDashboardData();
+  }
 
-  final List<Map<String, dynamic>> loanHistory = [
-    {
-      'date': '2025-07-01',
-      'amount': 147000.0,
-      'status': 'Active',
-      'duration': '2 months',
-      'statusColor': Colors.orange,
-    },
-    {
-      'date': '2025-05-15',
-      'amount': 73500.0,
-      'status': 'Completed',
-      'duration': '1 month',
-      'statusColor': Colors.green,
-    },
-    {
-      'date': '2025-03-10',
-      'amount': 110250.0,
-      'status': 'Completed',
-      'duration': '1.5 months',
-      'statusColor': Colors.green,
-    },
-  ];
+  Future<void> _loadDashboardData() async {
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) return;
 
-  // KYC file paths
-  String? citizenshipFront;
-  String? citizenshipBack;
+      // --- Fetch user record ---
+      final userDoc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .get();
 
+      // Fallback display name
+      final displayName =
+          userDoc.data()?['displayName'] ??
+          user.displayName ??
+          user.email?.split('@').first ??
+          "User";
+
+      // --- Fetch loan history ---
+      final loansSnap = await FirebaseFirestore.instance
+          .collection('loans')
+          .where('userId', isEqualTo: user.uid)
+          .orderBy('createdAt', descending: true)
+          .get();
+
+      final loans = loansSnap.docs
+          .map((d) => LoanModel.fromMap(d.data()))
+          .toList();
+
+      final latestLoan = loans.isNotEmpty ? loans.first : null;
+      final activeLoan = loans.firstWhere(
+        (l) => l.status == 'active',
+        orElse: () =>
+            latestLoan ??
+            LoanModel(
+              id: "none",
+              userId: user.uid,
+              monthlySalary: 0,
+              salaryProofUrl: "",
+              durationMonths: 0,
+              reason: "",
+              loanableAmount: 0,
+              status: "none",
+              createdAt: DateTime.now(),
+            ),
+      );
+
+      final stats = {
+        'name': displayName,
+        'monthlySalary': latestLoan?.monthlySalary ?? 0.0,
+        'currentLoan': activeLoan.loanableAmount,
+        'loanDuration': activeLoan.durationMonths,
+        'remainingMonths': (activeLoan.durationMonths > 0)
+            ? activeLoan.durationMonths - 1
+            : 0,
+        'eligibleAmount': latestLoan?.loanableAmount ?? 0.0,
+        'nextDeductionDate': activeLoan.createdAt != null
+            ? activeLoan.createdAt!
+                  .add(const Duration(days: 30))
+                  .toString()
+                  .split(" ")
+                  .first
+            : 'N/A',
+        'loanStatus': activeLoan.status,
+      };
+
+      setState(() {
+        userData = stats;
+        _loans = loans;
+        _loading = false;
+      });
+    } catch (e) {
+      debugPrint("❌ Error loading dashboard: $e");
+      setState(() => _loading = false);
+    }
+  }
+
+  // ---------------- Build ----------------
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -86,18 +110,24 @@ class _UserDashboardState extends State<UserDashboard> {
       body: Row(
         children: [
           _buildSidebar(),
-          Expanded(child: _buildMainContent()),
+          Expanded(
+            child: _loading
+                ? const Center(child: CircularProgressIndicator())
+                : _buildMainContent(),
+          ),
         ],
       ),
     );
   }
 
+  // ---------------- Sidebar ----------------
   Widget _buildSidebar() {
     return Container(
       width: 280,
       color: Colors.white,
       child: Column(
         children: [
+          // Logo Section
           Container(
             padding: const EdgeInsets.all(24),
             decoration: BoxDecoration(
@@ -116,7 +146,7 @@ class _UserDashboardState extends State<UserDashboard> {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  'Welcome back, ${userData['name'].split(' ')[0]}',
+                  'Welcome back, ${(userData?['name'] ?? "User").split(' ')[0]}',
                   style: GoogleFonts.workSans(
                     fontSize: 14,
                     color: Colors.grey.shade600,
@@ -132,12 +162,11 @@ class _UserDashboardState extends State<UserDashboard> {
                 children: [
                   _buildNavItem(0, Icons.dashboard, 'Overview'),
                   _buildNavItem(1, Icons.credit_card, 'My Loans'),
-                  _buildNavItem(2, Icons.verified_user_outlined, 'KYC'),
-                  _buildNavItem(3, Icons.add_circle_outline, 'Apply Now'),
-                  _buildNavItem(4, Icons.account_circle_outlined, 'Profile'),
-                  _buildNavItem(5, Icons.help_outline, 'Help & Support'),
+                  _buildNavItem(2, Icons.add_circle_outline, 'Apply Now'),
+                  _buildNavItem(3, Icons.account_circle_outlined, 'Profile'),
+                  _buildNavItem(4, Icons.help_outline, 'Help & Support'),
                   const Spacer(),
-                  _buildNavItem(6, Icons.logout, 'Sign Out', isLogout: true),
+                  _buildNavItem(5, Icons.logout, 'Sign Out', isLogout: true),
                 ],
               ),
             ),
@@ -156,51 +185,49 @@ class _UserDashboardState extends State<UserDashboard> {
     final isSelected = _selectedIndex == index && !isLogout;
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          onTap: () {
-            if (isLogout) {
-              // Handle logout
-            } else {
-              setState(() => _selectedIndex = index);
-            }
-          },
-          borderRadius: BorderRadius.circular(12),
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            decoration: BoxDecoration(
-              color: isSelected ? Colors.orange.shade50 : Colors.transparent,
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Row(
-              children: [
-                Icon(
-                  icon,
+      child: InkWell(
+        onTap: () {
+          if (isLogout) {
+            FirebaseAuth.instance.signOut();
+          } else {
+            setState(() => _selectedIndex = index);
+          }
+        },
+        borderRadius: BorderRadius.circular(12),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          decoration: BoxDecoration(
+            color: isSelected ? Colors.orange.shade50 : Colors.transparent,
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Row(
+            children: [
+              Icon(
+                icon,
+                color: isSelected
+                    ? Colors.orange.shade700
+                    : Colors.grey.shade600,
+                size: 20,
+              ),
+              const SizedBox(width: 12),
+              Text(
+                title,
+                style: GoogleFonts.workSans(
+                  fontSize: 14,
+                  fontWeight: isSelected ? FontWeight.w600 : FontWeight.w400,
                   color: isSelected
                       ? Colors.orange.shade700
-                      : Colors.grey.shade600,
-                  size: 20,
+                      : Colors.grey.shade700,
                 ),
-                const SizedBox(width: 12),
-                Text(
-                  title,
-                  style: GoogleFonts.workSans(
-                    fontSize: 14,
-                    fontWeight: isSelected ? FontWeight.w600 : FontWeight.w400,
-                    color: isSelected
-                        ? Colors.orange.shade700
-                        : Colors.grey.shade700,
-                  ),
-                ),
-              ],
-            ),
+              ),
+            ],
           ),
         ),
       ),
     );
   }
 
+  // ---------------- Main ----------------
   Widget _buildMainContent() {
     return Padding(
       padding: const EdgeInsets.all(24),
@@ -239,39 +266,18 @@ class _UserDashboardState extends State<UserDashboard> {
             ),
           ],
         ),
-        Row(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(12),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.grey.shade200,
-                    blurRadius: 8,
-                    offset: const Offset(0, 2),
-                  ),
-                ],
-              ),
-              child: Icon(
-                Icons.notifications_outlined,
-                color: Colors.grey.shade600,
-              ),
+        CircleAvatar(
+          radius: 20,
+          backgroundColor: Colors.orange.shade100,
+          child: Text(
+            userData?['name'] != null && userData!['name'].isNotEmpty
+                ? userData!['name'][0].toUpperCase()
+                : "?",
+            style: GoogleFonts.workSans(
+              fontWeight: FontWeight.bold,
+              color: Colors.orange.shade700,
             ),
-            const SizedBox(width: 12),
-            CircleAvatar(
-              radius: 20,
-              backgroundColor: Colors.orange.shade100,
-              child: Text(
-                userData['name'][0],
-                style: GoogleFonts.workSans(
-                  fontWeight: FontWeight.bold,
-                  color: Colors.orange.shade700,
-                ),
-              ),
-            ),
-          ],
+          ),
         ),
       ],
     );
@@ -284,12 +290,10 @@ class _UserDashboardState extends State<UserDashboard> {
       case 1:
         return 'My Loans';
       case 2:
-        return 'KYC Verification';
-      case 3:
         return 'Apply for Loan';
-      case 4:
+      case 3:
         return 'Profile Settings';
-      case 5:
+      case 4:
         return 'Help & Support';
       default:
         return 'Dashboard';
@@ -303,12 +307,10 @@ class _UserDashboardState extends State<UserDashboard> {
       case 1:
         return 'Track your loan history and payments';
       case 2:
-        return 'Complete your KYC to get verified';
-      case 3:
         return 'Get instant salary advance';
-      case 4:
+      case 3:
         return 'Manage your account information';
-      case 5:
+      case 4:
         return 'Get help when you need it';
       default:
         return '';
@@ -322,221 +324,192 @@ class _UserDashboardState extends State<UserDashboard> {
       case 1:
         return _buildLoansContent();
       case 2:
-        return _buildKycContent();
-      case 3:
         return _buildApplyContent();
-      case 4:
+      case 3:
         return _buildProfileContent();
-      case 5:
+      case 4:
         return _buildHelpContent();
       default:
         return _buildOverviewContent();
     }
   }
 
-  // --- KYC FORM ---
-  Widget _buildKycContent() {
-    return SingleChildScrollView(
-      child: Container(
-        padding: const EdgeInsets.all(24),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(16),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.grey.shade200,
-              blurRadius: 8,
-              offset: const Offset(0, 2),
-            ),
-          ],
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'KYC Verification Form',
-              style: GoogleFonts.workSans(
-                fontSize: 22,
-                fontWeight: FontWeight.bold,
-                color: Colors.grey.shade800,
-              ),
-            ),
-            const SizedBox(height: 24),
-            _buildTextField('Full Name'),
-            const SizedBox(height: 16),
-            _buildTextField('Date of Birth', hint: 'YYYY-MM-DD'),
-            const SizedBox(height: 16),
-            _buildTextField('Citizenship Number'),
-            const SizedBox(height: 16),
-            _buildTextField('Issue Date', hint: 'YYYY-MM-DD'),
-            const SizedBox(height: 16),
-            _buildTextField('Issue District'),
-            const SizedBox(height: 16),
-            _buildTextField('Address'),
-            const SizedBox(height: 16),
-            _buildTextField('Phone Number', hint: '+977-XXXXXXXXX'),
-            const SizedBox(height: 24),
-            Row(
-              children: [
-                _buildFilePickerButton(
-                  'Upload Citizenship Front',
-                  true,
-                  citizenshipFront,
-                ),
-                const SizedBox(width: 16),
-                _buildFilePickerButton(
-                  'Upload Citizenship Back',
-                  false,
-                  citizenshipBack,
-                ),
-              ],
-            ),
-            const SizedBox(height: 32),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton(
-                onPressed: () {},
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.orange.shade600,
-                  padding: const EdgeInsets.symmetric(vertical: 16),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                ),
-                child: Text(
-                  'Submit KYC',
-                  style: GoogleFonts.workSans(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildTextField(String label, {String? hint}) {
-    return TextField(
-      style: GoogleFonts.workSans(fontSize: 15),
-      decoration: InputDecoration(
-        labelText: label,
-        hintText: hint,
-        border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-        contentPadding: const EdgeInsets.symmetric(
-          horizontal: 16,
-          vertical: 12,
-        ),
-      ),
-    );
-  }
-
-  Widget _buildFilePickerButton(String title, bool isFront, String? filePath) {
-    return Expanded(
-      child: OutlinedButton.icon(
-        onPressed: () async {
-          FilePickerResult? result = await FilePicker.platform.pickFiles(
-            type: FileType.image,
-          );
-          if (result != null) {
-            setState(() {
-              if (isFront) {
-                citizenshipFront = result.files.single.path;
-              } else {
-                citizenshipBack = result.files.single.path;
-              }
-            });
-          }
-        },
-        icon: const Icon(Icons.upload_file),
-        label: Text(
-          filePath != null ? 'Uploaded' : title,
-          style: GoogleFonts.workSans(fontSize: 13),
-        ),
-        style: OutlinedButton.styleFrom(
-          padding: const EdgeInsets.symmetric(vertical: 14),
-          side: BorderSide(color: Colors.orange.shade600),
-        ),
-      ),
-    );
-  }
-
-  // --- APPLY FORM ---
-  Widget _buildApplyContent() {
-    return SingleChildScrollView(
-      child: Container(
-        padding: const EdgeInsets.all(24),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(16),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.grey.shade200,
-              blurRadius: 8,
-              offset: const Offset(0, 2),
-            ),
-          ],
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Loan Application Form',
-              style: GoogleFonts.workSans(
-                fontSize: 22,
-                fontWeight: FontWeight.bold,
-                color: Colors.grey.shade800,
-              ),
-            ),
-            const SizedBox(height: 24),
-            _buildTextField('Loan Amount'),
-            const SizedBox(height: 16),
-            _buildTextField('Purpose of Loan'),
-            const SizedBox(height: 16),
-            _buildTextField('Repayment Duration (months)'),
-            const SizedBox(height: 24),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton(
-                onPressed: () {},
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.orange.shade600,
-                  padding: const EdgeInsets.symmetric(vertical: 16),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                ),
-                child: Text(
-                  'Submit Loan Application',
-                  style: GoogleFonts.workSans(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // --- EXISTING OVERVIEW, LOANS, PROFILE, HELP ---
+  // ---------------- Overview ----------------
   Widget _buildOverviewContent() {
-    return const Center(child: Text('Overview Content here'));
+    if (userData == null) return const SizedBox();
+    return SingleChildScrollView(
+      child: Column(
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: _buildStatCard(
+                  'Monthly Salary',
+                  'रु ${(userData?['monthlySalary'] ?? 0).toStringAsFixed(0)}',
+                  Icons.account_balance_wallet,
+                  Colors.green,
+                ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: _buildStatCard(
+                  'Available Loan',
+                  'रु ${(userData?['eligibleAmount'] ?? 0).toStringAsFixed(0)}',
+                  Icons.credit_card,
+                  Colors.orange,
+                ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: _buildStatCard(
+                  'Active Loan',
+                  'रु ${(userData?['currentLoan'] ?? 0).toStringAsFixed(0)}',
+                  Icons.trending_up,
+                  Colors.blue,
+                ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: _buildStatCard(
+                  'Remaining Months',
+                  '${userData?['remainingMonths'] ?? 0}',
+                  Icons.calendar_today,
+                  Colors.purple,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 24),
+          _buildLoanProgressCard(),
+        ],
+      ),
+    );
   }
 
+  Widget _buildStatCard(
+    String title,
+    String value,
+    IconData icon,
+    Color color,
+  ) {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.grey.shade200,
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: color.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Icon(icon, color: color, size: 24),
+          ),
+          const SizedBox(height: 16),
+          Text(
+            title,
+            style: GoogleFonts.workSans(
+              fontSize: 14,
+              color: Colors.grey.shade600,
+            ),
+          ),
+          Text(
+            value,
+            style: GoogleFonts.workSans(
+              fontSize: 24,
+              fontWeight: FontWeight.bold,
+              color: Colors.grey.shade800,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildLoanProgressCard() {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 24),
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.grey.shade200,
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Current Loan Progress',
+            style: GoogleFonts.workSans(
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+              color: Colors.grey.shade800,
+            ),
+          ),
+          const SizedBox(height: 20),
+          Text('Loan Amount: रु ${userData?['currentLoan'] ?? 0}'),
+          Text('Next Deduction: ${userData?['nextDeductionDate'] ?? "N/A"}'),
+          const SizedBox(height: 16),
+          LinearProgressIndicator(
+            value: 0.5,
+            minHeight: 8,
+            backgroundColor: Colors.grey.shade200,
+            color: Colors.orange.shade600,
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ---------------- Loans ----------------
   Widget _buildLoansContent() {
-    return const Center(child: Text('Loan History Content here'));
+    if (_loans.isEmpty) {
+      return Center(
+        child: Text(
+          "No loan history yet.",
+          style: GoogleFonts.workSans(fontSize: 16, color: Colors.grey),
+        ),
+      );
+    }
+    return ListView.builder(
+      itemCount: _loans.length,
+      itemBuilder: (context, i) {
+        final loan = _loans[i];
+        return ListTile(
+          title: Text("रु ${loan.loanableAmount.toStringAsFixed(0)}"),
+          subtitle: Text(
+            "${loan.durationMonths} months • ${loan.createdAt?.toString().split(' ').first ?? ''}",
+          ),
+          trailing: Chip(label: Text(loan.status)),
+        );
+      },
+    );
   }
 
-  Widget _buildProfileContent() {
-    return const Center(child: Text('Profile Settings will be here'));
-  }
+  // ---------------- Apply + Profile + Help ----------------
+  Widget _buildApplyContent() =>
+      const Center(child: Text("Loan Application Form here"));
 
-  Widget _buildHelpContent() {
-    return const Center(child: Text('Help & Support will be here'));
-  }
+  Widget _buildProfileContent() =>
+      Center(child: Text("Settings for ${userData?['name'] ?? "User"}"));
+
+  Widget _buildHelpContent() =>
+      const Center(child: Text("Help & Support here"));
 }
