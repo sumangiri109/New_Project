@@ -1,12 +1,14 @@
 <!DOCTYPE html>
 <html>
 <head>
+  <base href="$FLUTTER_BASE_HREF">
+
   <meta charset="UTF-8">
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
-  <meta name="description" content="Loan Project">
+  <meta name="description" content="A new Flutter project.">
 
   <!-- iOS meta tags & icons -->
-  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black">
   <meta name="apple-mobile-web-app-title" content="loan_project">
   <link rel="apple-touch-icon" href="icons/Icon-192.png">
@@ -17,31 +19,96 @@
   <title>loan_project</title>
   <link rel="manifest" href="manifest.json">
 
-  <!-- Base href for Flutter routing -->
-  <base href="$FLUTTER_BASE_HREF">
+  <!-- Google Sign-In Client ID -->
+  <meta name="google-signin-client_id" content="338090358950-ig80c6ikufeitpil9cclbdsrm0u1dpga.apps.googleusercontent.com">
+
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      background: #ffffff;
+    }
+    
+    .loading {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      font-family: Arial, sans-serif;
+      flex-direction: column;
+    }
+
+    .loading-spinner {
+      border: 3px solid #f3f3f3;
+      border-top: 3px solid #3498db;
+      border-radius: 50%;
+      width: 40px;
+      height: 40px;
+      animation: spin 2s linear infinite;
+      margin-bottom: 20px;
+    }
+
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+  </style>
 </head>
 <body>
-  <script src="flutter_bootstrap.js" async></script>
-
-  <!-- ================== Firebase SDKs ================== -->
-  <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-app-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-auth-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-firestore-compat.js"></script>
+  <div id="loading" class="loading">
+    <div class="loading-spinner"></div>
+    <div>Loading...</div>
+  </div>
 
   <script>
-  
-    const firebaseConfig = {
-  apiKey: "AIzaSyDIieSH_vH_PZ8qDZW4tIIUV-QsltdOuaU",
-  authDomain: "loanapp-63a08.firebaseapp.com",
-  projectId: "loanapp-63a08",
-  storageBucket: "loanapp-63a08.firebasestorage.app",
-  messagingSenderId: "338090358950",
-  appId: "1:338090358950:web:62de67fe6e82e59ee75c67",
-  measurementId: "G-7TPMCFNXRW"
+    var firebaseConfig = {
+      apiKey: "AIzaSyA6C0aMkf7ftn_TBRqJaS46u-t4vUScEpg",
+      authDomain: "loanapp-63a08.firebaseapp.com",
+      projectId: "loanapp-63a08",
+      storageBucket: "loanapp-63a08.firebasestorage.app",
+      messagingSenderId: "338090358950",
+      appId: "1:338090358950:web:62de67fe6e82e59ee75c67",
+      measurementId: "G-7TPMCFNXRW"
     };
 
-    // Initialize Firebase
-    firebase.initializeApp(firebaseConfig);
+    window.firebaseConfig = firebaseConfig;
+    
+    console.log('Firebase Config Loaded Successfully');
+    console.log('Google Client ID Configured');
+  </script>
+
+  <!-- Firebase SDK -->
+  <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-firestore-compat.js"></script>
+
+  <script>
+    try {
+      firebase.initializeApp(firebaseConfig);
+      console.log('Firebase initialized successfully');
+      console.log('Firebase Auth ready');
+      console.log('Firestore ready');
+    } catch (error) {
+      console.error('Firebase initialization error:', error);
+    }
+  </script>
+
+  <script src="https://apis.google.com/js/platform.js" async defer></script>
+
+  <script>
+    window.addEventListener('load', function(ev) {
+      _flutter.loader.load({
+        serviceWorkerSettings: {
+          serviceWorkerVersion: "{{flutter_service_worker_version}}"
+        },
+        onEntrypointLoaded: function(engineInitializer) {
+          engineInitializer.initializeEngine().then(function(appRunner) {
+            document.getElementById('loading').style.display = 'none';
+            appRunner.runApp();
+          });
+        }
+      });
+    });
   </script>
 </body>
 </html>
