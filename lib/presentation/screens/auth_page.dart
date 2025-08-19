@@ -209,7 +209,7 @@ class _LoginPageState extends State<LoginPage> {
     if (result.success) {
       Navigator.pushReplacement(
         context,
-        MaterialPageRoute(builder: (_) => const UserDashboard()),
+        MaterialPageRoute(builder: (_) => const UserDashboardPage()),
       );
     } else {
       ScaffoldMessenger.of(
@@ -355,7 +355,7 @@ class _LoginPageState extends State<LoginPage> {
                           Navigator.pushReplacement(
                             context,
                             MaterialPageRoute(
-                              builder: (_) => const UserDashboard(),
+                              builder: (_) => const UserDashboardPage(),
                             ),
                           );
                         } else {
