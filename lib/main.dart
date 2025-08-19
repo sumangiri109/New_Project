@@ -17,7 +17,7 @@ class MyApp extends StatelessWidget {
     return MaterialApp(
       title: 'PayAdvance - Loan Project',
       theme: ThemeData(primarySwatch: Colors.orange),
-      home: UserDashboard(),
+      home: LoginPage(),
       debugShowCheckedModeBanner: false,
     );
   }
