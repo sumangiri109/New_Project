@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:loan_project/presentation/screens/admin_dashboard.dart';
+import 'package:loan_project/presentation/screens/landing_page.dart';
 import 'package:loan_project/presentation/screens/testscreen.dart';
 import 'firebase_options.dart';
 import 'presentation/screens/auth_page.dart';
@@ -17,7 +18,7 @@ class MyApp extends StatelessWidget {
     return MaterialApp(
       title: 'PayAdvance - Loan Project',
       theme: ThemeData(primarySwatch: Colors.orange),
-      home: LoginPage(),
+      home: LandingPage(),
       debugShowCheckedModeBanner: false,
     );
   }

@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:loan_project/core/services/auth_page_services.dart';
+import 'package:loan_project/presentation/screens/auth_page.dart';
 
 class LandingPage extends StatefulWidget {
   const LandingPage({super.key});
@@ -81,7 +83,14 @@ class _LandingPageState extends State<LandingPage> {
                           SizedBox(
                             height: 70,
                             child: ElevatedButton(
-                              onPressed: () {},
+                              onPressed: () {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (context) => LoginPage(),
+                                  ),
+                                );
+                              },
                               style: ElevatedButton.styleFrom(
                                 backgroundColor: Colors.orange.shade700,
                                 padding: const EdgeInsets.symmetric(
@@ -153,7 +162,12 @@ class _NavBar extends StatelessWidget {
               child: MouseRegion(
                 cursor: SystemMouseCursors.click,
                 child: GestureDetector(
-                  onTap: () => print('$text clicked'),
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (context) => LoginPage()),
+                    );
+                  },
                   child: Text(
                     text,
                     style: GoogleFonts.workSans(
@@ -187,7 +201,12 @@ class _NavBar extends StatelessWidget {
           SizedBox(
             height: 50,
             child: ElevatedButton(
-              onPressed: () {},
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => LoginPage()),
+                );
+              },
               style: ElevatedButton.styleFrom(
                 backgroundColor: Colors.orange.shade700,
                 shape: RoundedRectangleBorder(
@@ -598,7 +617,14 @@ class FooterSection extends StatelessWidget {
                               child: MouseRegion(
                                 cursor: SystemMouseCursors.click,
                                 child: GestureDetector(
-                                  onTap: () => print('$text clicked'),
+                                  onTap: () {
+                                    Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (context) => LoginPage(),
+                                      ),
+                                    );
+                                  },
                                   child: Text(
                                     text,
                                     style: GoogleFonts.workSans(
