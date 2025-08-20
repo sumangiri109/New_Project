@@ -39,9 +39,15 @@ class _UserDashboardPageState extends State<UserDashboardPage> {
   final _phoneController = TextEditingController();
   final _addressController = TextEditingController();
   final _panController = TextEditingController();
+  final _dobController = TextEditingController();
 
   // Duration selection
   int _selectedDurationMonths = 1;
+
+  // File upload states
+  File? _salaryProofFile;
+  File? _consentFile;
+  File? _citizenshipFile;
 
   // Realtime listeners
   StreamSubscription<DocumentSnapshot<Object?>>? _kycSub;
@@ -63,6 +69,7 @@ class _UserDashboardPageState extends State<UserDashboardPage> {
     _phoneController.dispose();
     _addressController.dispose();
     _panController.dispose();
+    _dobController.dispose();
     super.dispose();
   }
 
@@ -208,7 +215,7 @@ class _UserDashboardPageState extends State<UserDashboardPage> {
     }
   }
 
-  // Apply for loan: now uploads salary proof and consent file (if any)
+  // Apply for loan: now uploads salary proof and consent file separately
   Future<void> _applyForLoanToService({
     required double monthlySalary,
     required int durationMonths,
@@ -236,6 +243,7 @@ class _UserDashboardPageState extends State<UserDashboardPage> {
       String proofUrl = '';
       String consentUrl = '';
 
+      // Upload salary proof
       if (salaryProof != null) {
         final ref = FirebaseStorage.instance.ref().child(
           'loans/${user.uid}/salary_${DateTime.now().millisecondsSinceEpoch}.jpg',
@@ -244,6 +252,7 @@ class _UserDashboardPageState extends State<UserDashboardPage> {
         proofUrl = await ref.getDownloadURL();
       }
 
+      // Upload consent file
       if (consentFile != null) {
         final ref = FirebaseStorage.instance.ref().child(
           'loans/${user.uid}/consent_${DateTime.now().millisecondsSinceEpoch}.jpg',
@@ -252,16 +261,13 @@ class _UserDashboardPageState extends State<UserDashboardPage> {
         consentUrl = await ref.getDownloadURL();
       }
 
-      // Note: your existing service applyForLoan expects salaryProofUrl; we'll store consentUrl in reason appended
-      // but ideally extend service to accept consentUrl. For now, append consent URL to reason as structured info.
-      final fullReason =
-          reason + (consentUrl.isNotEmpty ? '\nCONSENT_URL:$consentUrl' : '');
-
+      // Apply for loan with separate URLs
       await _dashboardService.applyForLoan(
         monthlySalary: monthlySalary,
         durationMonths: durationMonths,
-        reason: fullReason,
+        reason: reason,
         salaryProofUrl: proofUrl,
+        consentUrl: consentUrl,
       );
 
       if (!mounted) return;
@@ -271,9 +277,13 @@ class _UserDashboardPageState extends State<UserDashboardPage> {
         ),
       );
 
+      // Clear form and files
       _monthlySalaryController.clear();
       _loanPurposeController.clear();
       _selectedDurationMonths = 1;
+      _salaryProofFile = null;
+      _consentFile = null;
+      setState(() {});
     } catch (e) {
       if (mounted)
         ScaffoldMessenger.of(
@@ -597,7 +607,7 @@ class _UserDashboardPageState extends State<UserDashboardPage> {
     }
   }
 
-  // ---------- Overview UI (unchanged design) ----------
+  // ---------- Overview UI ----------
   Widget _buildOverviewContent() {
     return SingleChildScrollView(
       child: Column(
@@ -1178,19 +1188,50 @@ class _UserDashboardPageState extends State<UserDashboardPage> {
           Expanded(
             child: _loans.isEmpty
                 ? Center(
-                    child: Text(
-                      'You have no loans yet.',
-                      style: GoogleFonts.workSans(),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          Icons.credit_card_off,
+                          size: 64,
+                          color: Colors.grey.shade400,
+                        ),
+                        const SizedBox(height: 16),
+                        Text(
+                          'No loans yet',
+                          style: GoogleFonts.workSans(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.grey.shade600,
+                          ),
+                        ),
+                        Text(
+                          'Apply for your first loan to get started',
+                          style: GoogleFonts.workSans(
+                            fontSize: 14,
+                            color: Colors.grey.shade500,
+                          ),
+                        ),
+                        const SizedBox(height: 24),
+                        ElevatedButton(
+                          onPressed: () => setState(() => _selectedIndex = 2),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.orange.shade600,
+                            foregroundColor: Colors.white,
+                          ),
+                          child: Text(
+                            'Apply for Loan',
+                            style: GoogleFonts.workSans(),
+                          ),
+                        ),
+                      ],
                     ),
                   )
                 : ListView.builder(
                     itemCount: _loans.length,
                     itemBuilder: (context, index) {
                       final loan = _loans[index];
-                      final statusColor =
-                          loan.status.toLowerCase() == 'completed'
-                          ? Colors.green
-                          : Colors.orange;
+                      final statusColor = _getStatusColor(loan.status);
                       return Container(
                         margin: const EdgeInsets.only(bottom: 16),
                         padding: const EdgeInsets.all(20),
@@ -1208,9 +1249,7 @@ class _UserDashboardPageState extends State<UserDashboardPage> {
                                 borderRadius: BorderRadius.circular(8),
                               ),
                               child: Icon(
-                                loan.status.toLowerCase() == 'active'
-                                    ? Icons.schedule
-                                    : Icons.check_circle,
+                                _getStatusIcon(loan.status),
                                 color: statusColor,
                               ),
                             ),
@@ -1241,6 +1280,14 @@ class _UserDashboardPageState extends State<UserDashboardPage> {
                                       color: Colors.grey.shade500,
                                     ),
                                   ),
+                                  if (loan.reason.isNotEmpty)
+                                    Text(
+                                      'Purpose: ${loan.reason}',
+                                      style: GoogleFonts.workSans(
+                                        fontSize: 12,
+                                        color: Colors.grey.shade500,
+                                      ),
+                                    ),
                                 ],
                               ),
                             ),
@@ -1254,7 +1301,7 @@ class _UserDashboardPageState extends State<UserDashboardPage> {
                                 borderRadius: BorderRadius.circular(20),
                               ),
                               child: Text(
-                                loan.status,
+                                loan.status.toUpperCase(),
                                 style: GoogleFonts.workSans(
                                   fontSize: 12,
                                   fontWeight: FontWeight.w600,
@@ -1273,7 +1320,41 @@ class _UserDashboardPageState extends State<UserDashboardPage> {
     );
   }
 
-  // ---------- Apply UI (CHANGED) ----------
+  Color _getStatusColor(String status) {
+    switch (status.toLowerCase()) {
+      case 'approved':
+      case 'active':
+        return Colors.green;
+      case 'pending':
+        return Colors.orange;
+      case 'rejected':
+      case 'denied':
+        return Colors.red;
+      case 'completed':
+        return Colors.blue;
+      default:
+        return Colors.grey;
+    }
+  }
+
+  IconData _getStatusIcon(String status) {
+    switch (status.toLowerCase()) {
+      case 'approved':
+      case 'active':
+        return Icons.check_circle;
+      case 'pending':
+        return Icons.schedule;
+      case 'rejected':
+      case 'denied':
+        return Icons.cancel;
+      case 'completed':
+        return Icons.check_circle_outline;
+      default:
+        return Icons.help_outline;
+    }
+  }
+
+  // ---------- Apply UI with File Upload ----------
   Widget _buildApplyContent() {
     if (_kyc == null || _kyc?.verified != true) {
       return Center(
@@ -1302,6 +1383,7 @@ class _UserDashboardPageState extends State<UserDashboardPage> {
                     ? 'Please complete your KYC before applying for a loan.'
                     : 'Your KYC is submitted and waiting for admin verification. You will be able to apply when it is verified.',
                 textAlign: TextAlign.center,
+                style: GoogleFonts.workSans(),
               ),
               const SizedBox(height: 16),
               ElevatedButton(
@@ -1316,9 +1398,6 @@ class _UserDashboardPageState extends State<UserDashboardPage> {
         ),
       );
     }
-
-    File? salaryFile;
-    File? consentFile;
 
     return SingleChildScrollView(
       child: Container(
@@ -1352,25 +1431,27 @@ class _UserDashboardPageState extends State<UserDashboardPage> {
                   ),
                 ),
                 const SizedBox(width: 16),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Salary Advance Application',
-                      style: GoogleFonts.workSans(
-                        fontSize: 24,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.grey.shade800,
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Salary Advance Application',
+                        style: GoogleFonts.workSans(
+                          fontSize: 24,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.grey.shade800,
+                        ),
                       ),
-                    ),
-                    Text(
-                      'Get up to 98% of your monthly salary instantly',
-                      style: GoogleFonts.workSans(
-                        fontSize: 16,
-                        color: Colors.grey.shade600,
+                      Text(
+                        'Get up to 98% of your monthly salary instantly',
+                        style: GoogleFonts.workSans(
+                          fontSize: 16,
+                          color: Colors.grey.shade600,
+                        ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ],
             ),
@@ -1422,7 +1503,7 @@ class _UserDashboardPageState extends State<UserDashboardPage> {
             ),
             const SizedBox(height: 20),
 
-            // Monthly Salary (user provides)
+            // Monthly Salary
             _buildFormField(
               label: 'Monthly Salary (रु)',
               controller: _monthlySalaryController,
@@ -1461,68 +1542,131 @@ class _UserDashboardPageState extends State<UserDashboardPage> {
                 _buildDurationCard('3 Months', 3, _selectedDurationMonths == 3),
               ],
             ),
+            const SizedBox(height: 32),
+
+            // File Upload Section
+            Text(
+              'Document Upload',
+              style: GoogleFonts.workSans(
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+                color: Colors.grey.shade800,
+              ),
+            ),
             const SizedBox(height: 20),
 
-            // Salary proof + consent uploads
-            Row(
-              children: [
-                ElevatedButton(
-                  onPressed: () async {
-                    final f = await _pickImageFromGallery();
-                    if (f != null) {
-                      salaryFile = f;
-                      if (mounted) setState(() {});
-                    }
-                  },
-                  child: const Text('Upload Salary Proof'),
-                ),
-                const SizedBox(width: 12),
-                salaryFile != null
-                    ? const Icon(Icons.check, color: Colors.green)
-                    : const SizedBox(),
-                const SizedBox(width: 20),
-                ElevatedButton(
-                  onPressed: () async {
-                    final f = await _pickImageFromGallery();
-                    if (f != null) {
-                      consentFile = f;
-                      if (mounted) setState(() {});
-                    }
-                  },
-                  child: const Text('Upload Consent Form'),
-                ),
-                const SizedBox(width: 12),
-                consentFile != null
-                    ? const Icon(Icons.check, color: Colors.green)
-                    : const SizedBox(),
-              ],
+            // Salary Proof Upload
+            _buildFileUploadCard(
+              title: 'Salary Proof Document *',
+              description:
+                  'Upload your salary slip or bank statement (Required)',
+              icon: Icons.receipt_long,
+              file: _salaryProofFile,
+              onUpload: () async {
+                final file = await _pickImageFromGallery();
+                if (file != null) {
+                  setState(() => _salaryProofFile = file);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Salary proof selected successfully'),
+                    ),
+                  );
+                }
+              },
+              onRemove: () => setState(() => _salaryProofFile = null),
+              isRequired: true,
+            ),
+            const SizedBox(height: 16),
+
+            // Consent Form Upload
+            _buildFileUploadCard(
+              title: 'Consent Form',
+              description:
+                  'Upload signed consent form for salary deduction (Optional)',
+              icon: Icons.assignment,
+              file: _consentFile,
+              onUpload: () async {
+                final file = await _pickImageFromGallery();
+                if (file != null) {
+                  setState(() => _consentFile = file);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Consent form selected successfully'),
+                    ),
+                  );
+                }
+              },
+              onRemove: () => setState(() => _consentFile = null),
+              isRequired: false,
             ),
             const SizedBox(height: 32),
 
+            // Calculate Loan Details
+            if (_monthlySalaryController.text.isNotEmpty) ...[
+              Container(
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  color: Colors.blue.shade50,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.blue.shade200),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Loan Calculation',
+                      style: GoogleFonts.workSans(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.blue.shade800,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          'Monthly Eligible Amount:',
+                          style: GoogleFonts.workSans(fontSize: 14),
+                        ),
+                        Text(
+                          'रु ${((double.tryParse(_monthlySalaryController.text) ?? 0) * 0.98).toStringAsFixed(0)}',
+                          style: GoogleFonts.workSans(
+                            fontSize: 14,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          'Total Loan Amount:',
+                          style: GoogleFonts.workSans(fontSize: 14),
+                        ),
+                        Text(
+                          'रु ${(((double.tryParse(_monthlySalaryController.text) ?? 0) * 0.98) * _selectedDurationMonths).toStringAsFixed(0)}',
+                          style: GoogleFonts.workSans(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.green.shade600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 20),
+            ],
+
+            // Submit Button
             SizedBox(
               width: double.infinity,
               child: ElevatedButton(
-                onPressed: () {
-                  final salary =
-                      double.tryParse(_monthlySalaryController.text) ?? 0;
-                  final duration = _selectedDurationMonths;
-                  final reason = _loanPurposeController.text.trim();
-                  if (salary <= 0 || duration <= 0 || reason.isEmpty) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('Please fill all application fields'),
-                      ),
-                    );
-                    return;
-                  }
-                  _applyForLoanToService(
-                    monthlySalary: salary,
-                    durationMonths: duration,
-                    reason: reason,
-                    salaryProof: salaryFile,
-                    consentFile: consentFile,
-                  );
-                },
+                onPressed: _loading ? null : () => _validateAndSubmitLoan(),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.orange.shade600,
                   foregroundColor: Colors.white,
@@ -1531,17 +1675,190 @@ class _UserDashboardPageState extends State<UserDashboardPage> {
                     borderRadius: BorderRadius.circular(12),
                   ),
                 ),
-                child: Text(
-                  'Submit Application',
-                  style: GoogleFonts.workSans(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
+                child: _loading
+                    ? const CircularProgressIndicator(color: Colors.white)
+                    : Text(
+                        'Submit Application',
+                        style: GoogleFonts.workSans(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
               ),
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  void _validateAndSubmitLoan() {
+    final salary = double.tryParse(_monthlySalaryController.text) ?? 0;
+    final duration = _selectedDurationMonths;
+    final reason = _loanPurposeController.text.trim();
+
+    if (salary <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please enter a valid monthly salary')),
+      );
+      return;
+    }
+
+    if (duration <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please select loan duration')),
+      );
+      return;
+    }
+
+    if (reason.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please enter the purpose of loan')),
+      );
+      return;
+    }
+
+    if (_salaryProofFile == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please upload salary proof document')),
+      );
+      return;
+    }
+
+    _applyForLoanToService(
+      monthlySalary: salary,
+      durationMonths: duration,
+      reason: reason,
+      salaryProof: _salaryProofFile,
+      consentFile: _consentFile,
+    );
+  }
+
+  Widget _buildFileUploadCard({
+    required String title,
+    required String description,
+    required IconData icon,
+    required File? file,
+    required VoidCallback onUpload,
+    required VoidCallback onRemove,
+    required bool isRequired,
+  }) {
+    final bool hasFile = file != null;
+    final Color borderColor = hasFile
+        ? Colors.green.shade300
+        : (isRequired ? Colors.orange.shade300 : Colors.grey.shade300);
+    final Color bgColor = hasFile
+        ? Colors.green.shade50
+        : (isRequired ? Colors.orange.shade50 : Colors.grey.shade50);
+
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        border: Border.all(color: borderColor, width: 2),
+        borderRadius: BorderRadius.circular(12),
+        color: bgColor,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: hasFile
+                      ? Colors.green.shade100
+                      : (isRequired
+                            ? Colors.orange.shade100
+                            : Colors.grey.shade200),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Icon(
+                  icon,
+                  color: hasFile
+                      ? Colors.green.shade600
+                      : (isRequired
+                            ? Colors.orange.shade600
+                            : Colors.grey.shade600),
+                  size: 24,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: GoogleFonts.workSans(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.grey.shade800,
+                      ),
+                    ),
+                    Text(
+                      description,
+                      style: GoogleFonts.workSans(
+                        fontSize: 14,
+                        color: Colors.grey.shade600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (hasFile) ...[
+                IconButton(
+                  onPressed: onRemove,
+                  icon: Icon(Icons.close, color: Colors.red.shade600),
+                  tooltip: 'Remove file',
+                ),
+                const SizedBox(width: 8),
+              ],
+              ElevatedButton.icon(
+                onPressed: onUpload,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: hasFile
+                      ? Colors.green.shade600
+                      : Colors.blue.shade600,
+                  foregroundColor: Colors.white,
+                  elevation: 0,
+                ),
+                icon: Icon(hasFile ? Icons.check : Icons.upload, size: 16),
+                label: Text(hasFile ? 'Uploaded' : 'Upload'),
+              ),
+            ],
+          ),
+          if (hasFile) ...[
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: Colors.green.shade100,
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.check_circle,
+                    color: Colors.green.shade600,
+                    size: 16,
+                  ),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      'File selected: ${file.path.split('/').last}',
+                      style: GoogleFonts.workSans(
+                        fontSize: 12,
+                        color: Colors.green.shade700,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ],
       ),
     );
   }
@@ -1557,6 +1874,7 @@ class _UserDashboardPageState extends State<UserDashboardPage> {
             borderRadius: BorderRadius.circular(12),
             border: Border.all(
               color: isSelected ? Colors.orange.shade300 : Colors.grey.shade300,
+              width: 2,
             ),
           ),
           child: Column(
@@ -1588,13 +1906,15 @@ class _UserDashboardPageState extends State<UserDashboardPage> {
     );
   }
 
-  // ---------- KYC, Profile, Settings, Help (kept same) ----------
+  // ---------- KYC Content ----------
   Widget _buildKYCContent() {
-    _fullNameController.text = _kyc?.fullName ?? _fullNameController.text;
-    _phoneController.text = _kyc?.phone ?? _phoneController.text;
-    _panController.text = _kyc?.citizenshipNumber ?? _panController.text;
-
-    File? citizenshipFile;
+    // Pre-fill form if KYC data exists
+    if (_kyc != null) {
+      _fullNameController.text = _kyc!.fullName;
+      _phoneController.text = _kyc!.phone;
+      _panController.text = _kyc!.citizenshipNumber;
+      _dobController.text = _kyc!.dateOfBirth;
+    }
 
     return SingleChildScrollView(
       child: Container(
@@ -1628,29 +1948,33 @@ class _UserDashboardPageState extends State<UserDashboardPage> {
                   ),
                 ),
                 const SizedBox(width: 16),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'KYC Verification',
-                      style: GoogleFonts.workSans(
-                        fontSize: 24,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.grey.shade800,
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'KYC Verification',
+                        style: GoogleFonts.workSans(
+                          fontSize: 24,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.grey.shade800,
+                        ),
                       ),
-                    ),
-                    Text(
-                      'Complete your identity verification',
-                      style: GoogleFonts.workSans(
-                        fontSize: 16,
-                        color: Colors.grey.shade600,
+                      Text(
+                        'Complete your identity verification',
+                        style: GoogleFonts.workSans(
+                          fontSize: 16,
+                          color: Colors.grey.shade600,
+                        ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ],
             ),
             const SizedBox(height: 32),
+
+            // Continuation of the _buildKYCContent method and remaining methods
             Container(
               width: double.infinity,
               padding: const EdgeInsets.all(24),
@@ -1658,51 +1982,73 @@ class _UserDashboardPageState extends State<UserDashboardPage> {
                 gradient: LinearGradient(
                   colors: _kyc?.verified == true
                       ? [Colors.green.shade50, Colors.green.shade100]
-                      : [Colors.orange.shade50, Colors.orange.shade100],
+                      : _kyc != null
+                      ? [Colors.orange.shade50, Colors.orange.shade100]
+                      : [Colors.blue.shade50, Colors.blue.shade100],
                 ),
                 borderRadius: BorderRadius.circular(12),
                 border: Border.all(
                   color: _kyc?.verified == true
                       ? Colors.green.shade200
-                      : Colors.orange.shade200,
+                      : _kyc != null
+                      ? Colors.orange.shade200
+                      : Colors.blue.shade200,
                 ),
               ),
               child: Column(
                 children: [
                   Icon(
-                    _kyc?.verified == true ? Icons.check_circle : Icons.pending,
+                    _kyc?.verified == true
+                        ? Icons.check_circle
+                        : _kyc != null
+                        ? Icons.schedule
+                        : Icons.info,
                     color: _kyc?.verified == true
                         ? Colors.green.shade600
-                        : Colors.orange.shade600,
+                        : _kyc != null
+                        ? Colors.orange.shade600
+                        : Colors.blue.shade600,
                     size: 48,
                   ),
                   const SizedBox(height: 16),
                   Text(
-                    _kyc?.verified == true ? 'KYC Verified' : 'KYC Pending',
+                    _kyc?.verified == true
+                        ? 'KYC Verified'
+                        : _kyc != null
+                        ? 'KYC Under Review'
+                        : 'KYC Required',
                     style: GoogleFonts.workSans(
                       fontSize: 20,
                       fontWeight: FontWeight.bold,
                       color: _kyc?.verified == true
                           ? Colors.green.shade700
-                          : Colors.orange.shade700,
+                          : _kyc != null
+                          ? Colors.orange.shade700
+                          : Colors.blue.shade700,
                     ),
                   ),
                   Text(
                     _kyc?.verified == true
-                        ? 'Your identity has been successfully verified'
-                        : 'Please complete the verification process',
+                        ? 'Your identity has been verified successfully'
+                        : _kyc != null
+                        ? 'Your KYC is submitted and under admin review'
+                        : 'Complete KYC to apply for loans',
                     style: GoogleFonts.workSans(
                       fontSize: 14,
                       color: _kyc?.verified == true
                           ? Colors.green.shade600
-                          : Colors.orange.shade600,
+                          : _kyc != null
+                          ? Colors.orange.shade600
+                          : Colors.blue.shade600,
                     ),
+                    textAlign: TextAlign.center,
                   ),
                 ],
               ),
             ),
-            const SizedBox(height: 32),
+
             if (_kyc?.verified != true) ...[
+              const SizedBox(height: 32),
               Text(
                 'Personal Information',
                 style: GoogleFonts.workSans(
@@ -1712,102 +2058,96 @@ class _UserDashboardPageState extends State<UserDashboardPage> {
                 ),
               ),
               const SizedBox(height: 20),
+
+              // Full Name
               _buildFormField(
-                label: 'Full Name',
+                label: 'Full Name *',
                 controller: _fullNameController,
-                hint: 'Enter your full name as per ID',
+                hint: 'Enter your full name as per citizenship',
                 icon: Icons.person,
               ),
-              const SizedBox(height: 20),
+              const SizedBox(height: 16),
+
+              // Phone
               _buildFormField(
-                label: 'Phone Number',
+                label: 'Phone Number *',
                 controller: _phoneController,
                 hint: 'Enter your phone number',
                 icon: Icons.phone,
                 keyboardType: TextInputType.phone,
               ),
-              const SizedBox(height: 20),
+              const SizedBox(height: 16),
+
+              // Date of Birth
               _buildFormField(
-                label: 'Date of Birth',
-                controller: TextEditingController(
-                  text: _kyc?.dateOfBirth ?? '',
-                ),
+                label: 'Date of Birth *',
+                controller: _dobController,
                 hint: 'YYYY-MM-DD',
-                icon: Icons.cake,
+                icon: Icons.calendar_today,
+                onTap: () async {
+                  final date = await showDatePicker(
+                    context: context,
+                    initialDate: DateTime.now().subtract(
+                      const Duration(days: 6570),
+                    ), // 18 years ago
+                    firstDate: DateTime(1950),
+                    lastDate: DateTime.now(),
+                  );
+                  if (date != null) {
+                    _dobController.text = _formatDate(date);
+                  }
+                },
+                readOnly: true,
               ),
-              const SizedBox(height: 20),
+              const SizedBox(height: 16),
+
+              // Citizenship Number
               _buildFormField(
-                label: 'Citizenship Number',
+                label: 'Citizenship Number *',
                 controller: _panController,
                 hint: 'Enter your citizenship number',
                 icon: Icons.credit_card,
               ),
-              const SizedBox(height: 32),
+              const SizedBox(height: 24),
+
+              // Citizenship Photo Upload
               Text(
                 'Document Upload',
                 style: GoogleFonts.workSans(
-                  fontSize: 20,
+                  fontSize: 18,
                   fontWeight: FontWeight.bold,
                   color: Colors.grey.shade800,
                 ),
               ),
-              const SizedBox(height: 20),
-              _buildDocumentUpload(
-                'Citizenship/Passport',
-                Icons.credit_card,
-                onUpload: () async {
-                  final f = await _pickImageFromGallery();
-                  if (f != null) {
-                    citizenshipFile = f;
-                    if (mounted) setState(() {});
-                  }
-                },
-              ),
               const SizedBox(height: 16),
-              _buildDocumentUpload(
-                'Photo',
-                Icons.camera_alt,
+
+              _buildFileUploadCard(
+                title: 'Citizenship Photo *',
+                description:
+                    'Upload a clear photo of your citizenship certificate',
+                icon: Icons.camera_alt,
+                file: _citizenshipFile,
                 onUpload: () async {
-                  final f = await _pickImageFromGallery();
-                  if (f != null) {
-                    if (mounted)
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text(
-                            'Photo picked (not uploaded separately)',
-                          ),
-                        ),
-                      );
+                  final file = await _pickImageFromGallery();
+                  if (file != null) {
+                    setState(() => _citizenshipFile = file);
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Citizenship photo selected'),
+                      ),
+                    );
                   }
                 },
+                onRemove: () => setState(() => _citizenshipFile = null),
+                isRequired: true,
               ),
               const SizedBox(height: 32),
+
+              // Submit KYC Button
               SizedBox(
                 width: double.infinity,
                 child: ElevatedButton(
-                  onPressed: () {
-                    final fullName = _fullNameController.text.trim();
-                    final phone = _phoneController.text.trim();
-                    final dob = ''; // optional
-                    final citizenshipNumber = _panController.text.trim();
-                    if (fullName.isEmpty ||
-                        phone.isEmpty ||
-                        citizenshipNumber.isEmpty) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Please fill required KYC fields'),
-                        ),
-                      );
-                      return;
-                    }
-                    _submitKYCToService(
-                      fullName: fullName,
-                      phone: phone,
-                      dateOfBirth: dob,
-                      citizenshipNumber: citizenshipNumber,
-                      citizenshipFile: citizenshipFile,
-                    );
-                  },
+                  onPressed: _loading ? null : _validateAndSubmitKYC,
                   style: ElevatedButton.styleFrom(
                     backgroundColor: Colors.blue.shade600,
                     foregroundColor: Colors.white,
@@ -1816,13 +2156,15 @@ class _UserDashboardPageState extends State<UserDashboardPage> {
                       borderRadius: BorderRadius.circular(12),
                     ),
                   ),
-                  child: Text(
-                    'Submit KYC',
-                    style: GoogleFonts.workSans(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
+                  child: _loading
+                      ? const CircularProgressIndicator(color: Colors.white)
+                      : Text(
+                          _kyc != null ? 'Update KYC' : 'Submit KYC',
+                          style: GoogleFonts.workSans(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
                 ),
               ),
             ],
@@ -1832,58 +2174,118 @@ class _UserDashboardPageState extends State<UserDashboardPage> {
     );
   }
 
-  Widget _buildDocumentUpload(
-    String title,
-    IconData icon, {
-    required Future<void> Function() onUpload,
-  }) {
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        border: Border.all(
-          color: Colors.grey.shade300,
-          style: BorderStyle.solid,
-        ),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Row(
-        children: [
-          Icon(icon, color: Colors.grey.shade600),
-          const SizedBox(width: 16),
-          Expanded(
-            child: Text(
-              title,
-              style: GoogleFonts.workSans(
-                fontSize: 16,
-                color: Colors.grey.shade700,
-              ),
-            ),
-          ),
-          ElevatedButton.icon(
-            onPressed: onUpload,
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.blue.shade50,
-              foregroundColor: Colors.blue.shade700,
-              elevation: 0,
-            ),
-            icon: const Icon(Icons.upload, size: 16),
-            label: const Text('Upload'),
-          ),
-        ],
-      ),
+  void _validateAndSubmitKYC() {
+    final fullName = _fullNameController.text.trim();
+    final phone = _phoneController.text.trim();
+    final dob = _dobController.text.trim();
+    final pan = _panController.text.trim();
+
+    if (fullName.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please enter your full name')),
+      );
+      return;
+    }
+
+    if (phone.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please enter your phone number')),
+      );
+      return;
+    }
+
+    if (dob.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please select your date of birth')),
+      );
+      return;
+    }
+
+    if (pan.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please enter your citizenship number')),
+      );
+      return;
+    }
+
+    if (_citizenshipFile == null &&
+        _kyc?.citizenshipPhotoUrl.isEmpty != false) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please upload citizenship photo')),
+      );
+      return;
+    }
+
+    _submitKYCToService(
+      fullName: fullName,
+      phone: phone,
+      dateOfBirth: dob,
+      citizenshipNumber: pan,
+      citizenshipFile: _citizenshipFile,
     );
   }
 
-  Widget _buildProfileContent() {
-    final monthlySalaryStr = _monthlySalaryFromLoans != null
-        ? 'रु ${_monthlySalaryFromLoans!.toStringAsFixed(0)}'
-        : 'रु 0';
-    final eligibleStr = 'रु ${_eligibleAmount.toStringAsFixed(0)}';
-    final currentLoanStr = _activeLoan != null
-        ? 'रु ${_activeLoan!.loanableAmount.toStringAsFixed(0)}'
-        : 'रु 0';
-    final kycStatus = _kyc?.verified == true ? 'verified' : 'pending';
+  Widget _buildFormField({
+    required String label,
+    required TextEditingController controller,
+    required String hint,
+    required IconData icon,
+    TextInputType keyboardType = TextInputType.text,
+    int maxLines = 1,
+    bool readOnly = false,
+    VoidCallback? onTap,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: GoogleFonts.workSans(
+            fontSize: 14,
+            fontWeight: FontWeight.w600,
+            color: Colors.grey.shade700,
+          ),
+        ),
+        const SizedBox(height: 8),
+        TextFormField(
+          controller: controller,
+          keyboardType: keyboardType,
+          maxLines: maxLines,
+          readOnly: readOnly,
+          onTap: onTap,
+          decoration: InputDecoration(
+            hintText: hint,
+            prefixIcon: Icon(icon, color: Colors.grey.shade500),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide(color: Colors.grey.shade300),
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide(color: Colors.grey.shade300),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide(color: Colors.orange.shade400, width: 2),
+            ),
+            filled: true,
+            fillColor: Colors.grey.shade50,
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: 16,
+              vertical: 16,
+            ),
+          ),
+          style: GoogleFonts.workSans(
+            fontSize: 14,
+            color: Colors.grey.shade800,
+          ),
+        ),
+      ],
+    );
+  }
 
+  // ---------- Profile Content ----------
+  Widget _buildProfileContent() {
     return SingleChildScrollView(
       child: Container(
         padding: const EdgeInsets.all(32),
@@ -1936,300 +2338,125 @@ class _UserDashboardPageState extends State<UserDashboardPage> {
                         ),
                       ),
                       const SizedBox(height: 8),
-                      Row(
-                        children: [
-                          Icon(
-                            Icons.verified,
-                            color: Colors.green.shade600,
-                            size: 16,
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 6,
+                        ),
+                        decoration: BoxDecoration(
+                          color: _kyc?.verified == true
+                              ? Colors.green.shade100
+                              : Colors.orange.shade100,
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: Text(
+                          _kyc?.verified == true ? 'Verified' : 'Unverified',
+                          style: GoogleFonts.workSans(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: _kyc?.verified == true
+                                ? Colors.green.shade700
+                                : Colors.orange.shade700,
                           ),
-                          const SizedBox(width: 4),
-                          Text(
-                            'Verified Account',
-                            style: GoogleFonts.workSans(
-                              fontSize: 14,
-                              color: Colors.green.shade600,
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                        ],
+                        ),
                       ),
                     ],
                   ),
                 ),
-                ElevatedButton.icon(
-                  onPressed: () {},
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.orange.shade50,
-                    foregroundColor: Colors.orange.shade700,
-                    elevation: 0,
-                  ),
-                  icon: const Icon(Icons.edit, size: 16),
-                  label: const Text('Edit Profile'),
-                ),
               ],
             ),
             const SizedBox(height: 32),
-            _buildProfileSection('Personal Information', [
-              _buildProfileItem('Full Name', _displayName(), Icons.person),
-              _buildProfileItem('Email', _email(), Icons.email),
-              _buildProfileItem('Phone', _kyc?.phone ?? '-', Icons.phone),
-              _buildProfileItem(
-                'Address',
-                _kyc?.citizenshipNumber ?? '-',
-                Icons.location_on,
+            Text(
+              'Account Information',
+              style: GoogleFonts.workSans(
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+                color: Colors.grey.shade800,
               ),
-            ]),
-            const SizedBox(height: 24),
-            _buildProfileSection('Employment Information', [
-              _buildProfileItem(
-                'Monthly Salary',
-                monthlySalaryStr,
-                Icons.account_balance_wallet,
+            ),
+            const SizedBox(height: 20),
+            _buildProfileInfoCard('Email', _email(), Icons.email),
+            const SizedBox(height: 12),
+            _buildProfileInfoCard(
+              'KYC Status',
+              _kyc?.verified == true ? 'Verified' : 'Not Verified',
+              Icons.verified_user,
+            ),
+            if (_kyc != null) ...[
+              const SizedBox(height: 12),
+              _buildProfileInfoCard('Full Name', _kyc!.fullName, Icons.person),
+              const SizedBox(height: 12),
+              _buildProfileInfoCard('Phone', _kyc!.phone, Icons.phone),
+              const SizedBox(height: 12),
+              _buildProfileInfoCard(
+                'Date of Birth',
+                _kyc!.dateOfBirth,
+                Icons.cake,
               ),
-              _buildProfileItem(
-                'Join Date',
-                _profile?.createdAt != null
-                    ? _formatDate(_profile!.createdAt!)
-                    : '-',
-                Icons.calendar_today,
-              ),
-              _buildProfileItem(
-                'KYC Status',
-                kycStatus.toUpperCase(),
-                Icons.verified_user,
-              ),
-            ]),
-            const SizedBox(height: 24),
-            _buildProfileSection('Loan Information', [
-              _buildProfileItem(
-                'Eligible Amount',
-                eligibleStr,
+              const SizedBox(height: 12),
+              _buildProfileInfoCard(
+                'Citizenship Number',
+                _kyc!.citizenshipNumber,
                 Icons.credit_card,
               ),
-              _buildProfileItem(
-                'Current Loan',
-                currentLoanStr,
-                Icons.trending_up,
+            ],
+            const SizedBox(height: 32),
+            Text(
+              'Loan Summary',
+              style: GoogleFonts.workSans(
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+                color: Colors.grey.shade800,
               ),
-              _buildProfileItem(
-                'Loan Status',
-                _activeLoan?.status.toUpperCase() ?? 'N/A',
-                Icons.info,
-              ),
-            ]),
+            ),
+            const SizedBox(height: 20),
+            Row(
+              children: [
+                Expanded(
+                  child: _buildSummaryCard(
+                    'Total Loans',
+                    _loans.length.toString(),
+                    Icons.credit_card,
+                    Colors.blue,
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: _buildSummaryCard(
+                    'Active Loans',
+                    _loans
+                        .where((l) => l.status.toLowerCase() == 'active')
+                        .length
+                        .toString(),
+                    Icons.trending_up,
+                    Colors.green,
+                  ),
+                ),
+              ],
+            ),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildProfileSection(String title, List<Widget> items) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          title,
-          style: GoogleFonts.workSans(
-            fontSize: 20,
-            fontWeight: FontWeight.bold,
-            color: Colors.grey.shade800,
-          ),
-        ),
-        const SizedBox(height: 16),
-        Container(
-          padding: const EdgeInsets.all(20),
-          decoration: BoxDecoration(
-            color: Colors.grey.shade50,
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Column(children: items),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildProfileItem(String label, String value, IconData icon) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Row(
-        children: [
-          Icon(icon, color: Colors.grey.shade600, size: 20),
-          const SizedBox(width: 12),
-          Text(
-            '$label:',
-            style: GoogleFonts.workSans(
-              fontSize: 14,
-              color: Colors.grey.shade600,
-            ),
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              value,
-              style: GoogleFonts.workSans(
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
-                color: Colors.grey.shade800,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildSettingsContent() {
+  Widget _buildProfileInfoCard(String title, String value, IconData icon) {
     return Container(
-      padding: const EdgeInsets.all(32),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.grey.shade200,
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
+        color: Colors.grey.shade50,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.grey.shade200),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Settings',
-            style: GoogleFonts.workSans(
-              fontSize: 24,
-              fontWeight: FontWeight.bold,
-              color: Colors.grey.shade800,
-            ),
-          ),
-          const SizedBox(height: 32),
-          _buildSettingItem(
-            'Notifications',
-            'Manage notification preferences',
-            Icons.notifications,
-            true,
-          ),
-          _buildSettingItem(
-            'Email Alerts',
-            'Get updates via email',
-            Icons.email,
-            true,
-          ),
-          _buildSettingItem(
-            'SMS Alerts',
-            'Get updates via SMS',
-            Icons.sms,
-            false,
-          ),
-          _buildSettingItem(
-            'Dark Mode',
-            'Switch to dark theme',
-            Icons.dark_mode,
-            false,
-          ),
-          const SizedBox(height: 24),
-          Divider(color: Colors.grey.shade300),
-          const SizedBox(height: 24),
-          _buildSettingButton(
-            'Change Password',
-            'Update your account password',
-            Icons.lock,
-            Colors.blue,
-          ),
-          _buildSettingButton(
-            'Two-Factor Authentication',
-            'Add extra security to your account',
-            Icons.security,
-            Colors.green,
-          ),
-          _buildSettingButton(
-            'Delete Account',
-            'Permanently delete your account',
-            Icons.delete,
-            Colors.red,
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildHelpContent() {
-    return Container(
-      padding: const EdgeInsets.all(32),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.grey.shade200,
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Help & Support',
-            style: GoogleFonts.workSans(
-              fontSize: 24,
-              fontWeight: FontWeight.bold,
-              color: Colors.grey.shade800,
-            ),
-          ),
-          const SizedBox(height: 32),
-          _buildHelpCard(
-            'Frequently Asked Questions',
-            'Find answers to common questions',
-            Icons.help_outline,
-            Colors.blue,
-          ),
-          const SizedBox(height: 16),
-          _buildHelpCard(
-            'Contact Support',
-            'Get in touch with our support team',
-            Icons.support_agent,
-            Colors.green,
-          ),
-          const SizedBox(height: 16),
-          _buildHelpCard(
-            'Live Chat',
-            'Chat with us in real-time',
-            Icons.chat,
-            Colors.orange,
-          ),
-          const SizedBox(height: 16),
-          _buildHelpCard(
-            'Report an Issue',
-            'Report bugs or technical issues',
-            Icons.bug_report,
-            Colors.red,
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildSettingItem(
-    String title,
-    String subtitle,
-    IconData icon,
-    bool value,
-  ) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
       child: Row(
         children: [
           Container(
             padding: const EdgeInsets.all(8),
             decoration: BoxDecoration(
-              color: Colors.grey.shade100,
+              color: Colors.grey.shade200,
               borderRadius: BorderRadius.circular(8),
             ),
-            child: Icon(icon, color: Colors.grey.shade600, size: 20),
+            child: Icon(icon, size: 20, color: Colors.grey.shade600),
           ),
           const SizedBox(width: 16),
           Expanded(
@@ -2239,234 +2466,415 @@ class _UserDashboardPageState extends State<UserDashboardPage> {
                 Text(
                   title,
                   style: GoogleFonts.workSans(
+                    fontSize: 12,
+                    color: Colors.grey.shade600,
+                  ),
+                ),
+                Text(
+                  value,
+                  style: GoogleFonts.workSans(
                     fontSize: 16,
                     fontWeight: FontWeight.w600,
                     color: Colors.grey.shade800,
                   ),
                 ),
-                Text(
-                  subtitle,
-                  style: GoogleFonts.workSans(
-                    fontSize: 14,
-                    color: Colors.grey.shade600,
-                  ),
-                ),
               ],
             ),
-          ),
-          Switch(
-            value: value,
-            onChanged: (newValue) {},
-            activeColor: Colors.orange.shade600,
           ),
         ],
       ),
     );
   }
 
-  Widget _buildSettingButton(
+  Widget _buildSummaryCard(
     String title,
-    String subtitle,
+    String value,
     IconData icon,
     Color color,
   ) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: InkWell(
-        onTap: () {},
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.1),
         borderRadius: BorderRadius.circular(12),
-        child: Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: color.withOpacity(0.05),
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: color.withOpacity(0.2)),
+        border: Border.all(color: color.withOpacity(0.3)),
+      ),
+      child: Column(
+        children: [
+          Icon(icon, color: color, size: 32),
+          const SizedBox(height: 12),
+          Text(
+            value,
+            style: GoogleFonts.workSans(
+              fontSize: 24,
+              fontWeight: FontWeight.bold,
+              color: color,
+            ),
           ),
-          child: Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: color.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Icon(icon, color: color, size: 20),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      title,
-                      style: GoogleFonts.workSans(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                        color: Colors.grey.shade800,
-                      ),
-                    ),
-                    Text(
-                      subtitle,
-                      style: GoogleFonts.workSans(
-                        fontSize: 14,
-                        color: Colors.grey.shade600,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              Icon(
-                Icons.arrow_forward_ios,
-                color: Colors.grey.shade400,
-                size: 16,
-              ),
-            ],
+          Text(
+            title,
+            style: GoogleFonts.workSans(
+              fontSize: 14,
+              color: color.withOpacity(0.8),
+            ),
           ),
-        ),
+        ],
       ),
     );
   }
 
-  Widget _buildHelpCard(
-    String title,
-    String subtitle,
-    IconData icon,
-    Color color,
-  ) {
-    return InkWell(
-      onTap: () {},
-      borderRadius: BorderRadius.circular(12),
+  // ---------- Settings Content ----------
+  Widget _buildSettingsContent() {
+    return SingleChildScrollView(
       child: Container(
-        padding: const EdgeInsets.all(20),
+        padding: const EdgeInsets.all(32),
         decoration: BoxDecoration(
-          color: color.withOpacity(0.05),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: color.withOpacity(0.2)),
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.grey.shade200,
+              blurRadius: 8,
+              offset: const Offset(0, 2),
+            ),
+          ],
         ),
-        child: Row(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: color.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Icon(icon, color: color, size: 24),
-            ),
-            const SizedBox(width: 16),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    title,
-                    style: GoogleFonts.workSans(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                      color: Colors.grey.shade800,
-                    ),
-                  ),
-                  Text(
-                    subtitle,
-                    style: GoogleFonts.workSans(
-                      fontSize: 14,
-                      color: Colors.grey.shade600,
-                    ),
-                  ),
-                ],
+            Text(
+              'Application Settings',
+              style: GoogleFonts.workSans(
+                fontSize: 24,
+                fontWeight: FontWeight.bold,
+                color: Colors.grey.shade800,
               ),
             ),
-            Icon(
-              Icons.arrow_forward_ios,
-              color: Colors.grey.shade400,
-              size: 16,
-            ),
+            const SizedBox(height: 32),
+            _buildSettingsSection('Account', [
+              _buildSettingsItem(
+                'Change Password',
+                'Update your account password',
+                Icons.lock,
+                () {},
+              ),
+              _buildSettingsItem(
+                'Privacy Settings',
+                'Manage your privacy preferences',
+                Icons.privacy_tip,
+                () {},
+              ),
+            ]),
+            const SizedBox(height: 24),
+            _buildSettingsSection('Notifications', [
+              _buildSettingsItem(
+                'Push Notifications',
+                'Manage push notification settings',
+                Icons.notifications,
+                () {},
+              ),
+              _buildSettingsItem(
+                'Email Notifications',
+                'Control email notification preferences',
+                Icons.email,
+                () {},
+              ),
+            ]),
+            const SizedBox(height: 24),
+            _buildSettingsSection('Support', [
+              _buildSettingsItem(
+                'Help Center',
+                'Get help and support',
+                Icons.help,
+                () => setState(() => _selectedIndex = 6),
+              ),
+              _buildSettingsItem(
+                'Terms of Service',
+                'Read our terms and conditions',
+                Icons.description,
+                () {},
+              ),
+              _buildSettingsItem(
+                'Privacy Policy',
+                'View our privacy policy',
+                Icons.shield,
+                () {},
+              ),
+            ]),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildFormField({
-    required String label,
-    required TextEditingController controller,
-    required String hint,
-    required IconData icon,
-    TextInputType? keyboardType,
-    int maxLines = 1,
-  }) {
+  Widget _buildSettingsSection(String title, List<Widget> items) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          label,
+          title,
           style: GoogleFonts.workSans(
-            fontSize: 16,
-            fontWeight: FontWeight.w600,
-            color: Colors.grey.shade700,
+            fontSize: 18,
+            fontWeight: FontWeight.bold,
+            color: Colors.grey.shade800,
           ),
         ),
-        const SizedBox(height: 8),
-        TextFormField(
-          controller: controller,
-          keyboardType: keyboardType,
-          maxLines: maxLines,
-          decoration: InputDecoration(
-            hintText: hint,
-            prefixIcon: Icon(icon, color: Colors.grey.shade500),
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide(color: Colors.grey.shade300),
-            ),
-            focusedBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide(color: Colors.orange.shade500),
-            ),
-            filled: true,
-            fillColor: Colors.grey.shade50,
-          ),
-        ),
+        const SizedBox(height: 16),
+        ...items,
       ],
     );
   }
 
+  Widget _buildSettingsItem(
+    String title,
+    String subtitle,
+    IconData icon,
+    VoidCallback onTap,
+  ) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(12),
+          child: Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Colors.grey.shade50,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: Colors.grey.shade200),
+            ),
+            child: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade200,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Icon(icon, size: 20, color: Colors.grey.shade600),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        style: GoogleFonts.workSans(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.grey.shade800,
+                        ),
+                      ),
+                      Text(
+                        subtitle,
+                        style: GoogleFonts.workSans(
+                          fontSize: 14,
+                          color: Colors.grey.shade600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Icon(Icons.chevron_right, color: Colors.grey.shade400),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ---------- Help Content ----------
+  Widget _buildHelpContent() {
+    return SingleChildScrollView(
+      child: Container(
+        padding: const EdgeInsets.all(32),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.grey.shade200,
+              blurRadius: 8,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Help & Support',
+              style: GoogleFonts.workSans(
+                fontSize: 24,
+                fontWeight: FontWeight.bold,
+                color: Colors.grey.shade800,
+              ),
+            ),
+            const SizedBox(height: 32),
+
+            // Contact Information
+            Container(
+              padding: const EdgeInsets.all(24),
+              decoration: BoxDecoration(
+                color: Colors.blue.shade50,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.blue.shade200),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Contact Support',
+                    style: GoogleFonts.workSans(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.blue.shade800,
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Row(
+                    children: [
+                      Icon(Icons.phone, color: Colors.blue.shade600),
+                      const SizedBox(width: 12),
+                      Text(
+                        '+977-1-4444444',
+                        style: GoogleFonts.workSans(
+                          fontSize: 16,
+                          color: Colors.grey.shade800,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Icon(Icons.email, color: Colors.blue.shade600),
+                      const SizedBox(width: 12),
+                      Text(
+                        'support@payadvance.com',
+                        style: GoogleFonts.workSans(
+                          fontSize: 16,
+                          color: Colors.grey.shade800,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 32),
+
+            // FAQ Section
+            Text(
+              'Frequently Asked Questions',
+              style: GoogleFonts.workSans(
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+                color: Colors.grey.shade800,
+              ),
+            ),
+            const SizedBox(height: 20),
+            _buildFAQItem(
+              'How do I apply for a loan?',
+              'Complete your KYC verification first, then navigate to the "Apply Loan" section and fill out the application form with required documents.',
+            ),
+            _buildFAQItem(
+              'What documents are required for KYC?',
+              'You need to provide your full name, phone number, date of birth, citizenship number, and upload a clear photo of your citizenship certificate.',
+            ),
+            _buildFAQItem(
+              'How long does loan approval take?',
+              'Loan approval typically takes 1-3 business days after submitting your complete application with all required documents.',
+            ),
+            _buildFAQItem(
+              'What is the maximum loan amount?',
+              'You can borrow up to 98% of your monthly salary. The exact amount depends on your salary verification.',
+            ),
+            _buildFAQItem(
+              'How is the loan repaid?',
+              'The loan amount is automatically deducted from your monthly salary as per the agreed terms.',
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildFAQItem(String question, String answer) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.grey.shade50,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.grey.shade200),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            question,
+            style: GoogleFonts.workSans(
+              fontSize: 16,
+              fontWeight: FontWeight.w600,
+              color: Colors.grey.shade800,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            answer,
+            style: GoogleFonts.workSans(
+              fontSize: 14,
+              color: Colors.grey.shade600,
+              height: 1.5,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Logout Dialog
   void _showLogoutDialog() {
     showDialog(
       context: context,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          title: Text(
-            'Confirm Logout',
-            style: GoogleFonts.workSans(fontWeight: FontWeight.bold),
-          ),
-          content: Text(
-            'Are you sure you want to sign out?',
-            style: GoogleFonts.workSans(),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: Text(
-                'Cancel',
-                style: GoogleFonts.workSans(color: Colors.grey.shade600),
-              ),
+      builder: (context) => AlertDialog(
+        title: Text(
+          'Sign Out',
+          style: GoogleFonts.workSans(fontWeight: FontWeight.bold),
+        ),
+        content: Text(
+          'Are you sure you want to sign out?',
+          style: GoogleFonts.workSans(),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text(
+              'Cancel',
+              style: GoogleFonts.workSans(color: Colors.grey.shade600),
             ),
-            ElevatedButton(
-              onPressed: () async {
-                Navigator.of(context).pop();
-                await _authService.signOut();
-                if (mounted)
-                  Navigator.of(context).pushReplacementNamed('/login');
-              },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.red.shade600,
-                foregroundColor: Colors.white,
-              ),
-              child: Text('Sign Out', style: GoogleFonts.workSans()),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              Navigator.pop(context);
+              await _authService.signOut();
+              if (mounted) {
+                Navigator.pushReplacementNamed(context, '/auth');
+              }
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red.shade600,
+              foregroundColor: Colors.white,
             ),
-          ],
-        );
-      },
+            child: Text('Sign Out', style: GoogleFonts.workSans()),
+          ),
+        ],
+      ),
     );
   }
 }
