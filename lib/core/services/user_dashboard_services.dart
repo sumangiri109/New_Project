@@ -17,12 +17,13 @@ class UserDashboardServices {
     return UserModel.fromMap(doc.data()!);
   }
 
-  // --- Apply for loan ---
+  // --- Apply for loan with consent URL support ---
   Future<void> applyForLoan({
     required double monthlySalary,
     required int durationMonths,
     required String reason,
     required String salaryProofUrl,
+    required String consentUrl, // Added consent URL parameter
   }) async {
     final user = _auth.currentUser;
     if (user == null) throw Exception("User not logged in");
@@ -38,6 +39,7 @@ class UserDashboardServices {
       userId: user.uid,
       monthlySalary: monthlySalary,
       salaryProofUrl: salaryProofUrl,
+      consentUrl: consentUrl, // Added consent URL
       durationMonths: durationMonths,
       reason: reason,
       loanableAmount: totalLoanAmount,

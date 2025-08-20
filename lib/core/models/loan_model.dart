@@ -5,6 +5,7 @@ class LoanModel {
   final String userId;
   final double monthlySalary;
   final String salaryProofUrl;
+  final String consentUrl; // Added consent URL field
   final int durationMonths;
   final String reason;
   final double loanableAmount;
@@ -16,6 +17,7 @@ class LoanModel {
     required this.userId,
     required this.monthlySalary,
     required this.salaryProofUrl,
+    required this.consentUrl, // Added to constructor
     required this.durationMonths,
     required this.reason,
     required this.loanableAmount,
@@ -29,6 +31,7 @@ class LoanModel {
       userId: map["userId"] ?? "",
       monthlySalary: (map["monthlySalary"] ?? 0).toDouble(),
       salaryProofUrl: map["salaryProofUrl"] ?? "",
+      consentUrl: map["consentUrl"] ?? "", // Added consent URL mapping
       durationMonths: map["durationMonths"] ?? 0,
       reason: map["reason"] ?? "",
       loanableAmount: (map["loanableAmount"] ?? 0).toDouble(),
@@ -45,6 +48,7 @@ class LoanModel {
       "userId": userId,
       "monthlySalary": monthlySalary,
       "salaryProofUrl": salaryProofUrl,
+      "consentUrl": consentUrl, // Added consent URL to map
       "durationMonths": durationMonths,
       "reason": reason,
       "loanableAmount": loanableAmount,
