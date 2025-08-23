@@ -1,122 +1,150 @@
+// lib/presentation/screens/admin_dashboard.dart
+import 'dart:async';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:loan_project/core/models/kyc_model.dart';
+import 'package:loan_project/core/models/loan_model.dart';
+import 'package:loan_project/core/models/user_model.dart';
+import 'package:loan_project/core/services/admin_dashboard_services.dart';
+import 'package:loan_project/core/services/auth_page_services.dart';
+import 'package:loan_project/presentation/screens/admin_loan_details.dart';
+import 'package:loan_project/presentation/screens/admin_kyc_details.dart';
+import 'package:loan_project/presentation/screens/admin_user_details.dart';
 
-class AdminDashboard extends StatefulWidget {
-  const AdminDashboard({super.key});
+class AdminDashboardPage extends StatefulWidget {
+  const AdminDashboardPage({super.key});
 
   @override
-  State<AdminDashboard> createState() => _AdminDashboardState();
+  State<AdminDashboardPage> createState() => _AdminDashboardPageState();
 }
 
-class _AdminDashboardState extends State<AdminDashboard> {
+class _AdminDashboardPageState extends State<AdminDashboardPage> {
+  final AdminDashboardServices _adminService = AdminDashboardServices();
+  final AuthPageServices _authService = AuthPageServices();
+
   int _selectedIndex = 0;
+  bool _loading = true;
+  Map<String, dynamic> _dashboardStats = {};
+  List<Map<String, dynamic>> _recentActivities = [];
 
-  // Sample admin data
-  final Map<String, dynamic> adminStats = {
-    'totalLoans': 1250000.0,
-    'activeLoans': 890000.0,
-    'totalUsers': 145,
-    'pendingApplications': 12,
-    'monthlyRevenue': 75000.0,
-    'defaultRate': 2.5,
-  };
+  // Stream controllers
+  StreamSubscription<QuerySnapshot>? _loansSubscription;
+  StreamSubscription<QuerySnapshot>? _kycSubscription;
+  StreamSubscription<QuerySnapshot>? _usersSubscription;
 
-  final List<Map<String, dynamic>> pendingApplications = [
-    {
-      'id': 'APP001',
-      'userName': 'Sita Rai',
-      'amount': 73500.0,
-      'salary': 75000.0,
-      'duration': 1,
-      'appliedDate': '2025-08-10',
-      'status': 'Pending',
-      'riskScore': 'Low',
-      'documents': ['Salary Slip', 'ID Card'],
-    },
-    {
-      'id': 'APP002',
-      'userName': 'Krishna Tamang',
-      'amount': 147000.0,
-      'salary': 150000.0,
-      'duration': 2,
-      'appliedDate': '2025-08-09',
-      'status': 'Under Review',
-      'riskScore': 'Medium',
-      'documents': ['Salary Slip', 'Bank Statement'],
-    },
-    {
-      'id': 'APP003',
-      'userName': 'Maya Gurung',
-      'amount': 49000.0,
-      'salary': 50000.0,
-      'duration': 1,
-      'appliedDate': '2025-08-08',
-      'status': 'Pending',
-      'riskScore': 'Low',
-      'documents': ['Salary Slip'],
-    },
-  ];
+  // Data
+  List<LoanModel> _loans = [];
+  List<KYCModel> _kycApplications = [];
+  List<UserModel> _users = [];
 
-  final List<Map<String, dynamic>> recentUsers = [
-    {
-      'name': 'Ramesh Sharma',
-      'salary': 75000.0,
-      'joinDate': '2025-07-15',
-      'totalLoans': 3,
-      'status': 'Active',
-      'riskLevel': 'Low',
-    },
-    {
-      'name': 'Priya Thapa',
-      'salary': 85000.0,
-      'joinDate': '2025-07-20',
-      'totalLoans': 2,
-      'status': 'Active',
-      'riskLevel': 'Low',
-    },
-    {
-      'name': 'Arun Magar',
-      'salary': 120000.0,
-      'joinDate': '2025-08-01',
-      'totalLoans': 1,
-      'status': 'Active',
-      'riskLevel': 'Medium',
-    },
-  ];
+  @override
+  void initState() {
+    super.initState();
+    _checkAdminAndLoadData();
+  }
 
-  final List<Map<String, dynamic>> recentTransactions = [
-    {
-      'type': 'Loan Disbursed',
-      'user': 'Ramesh Sharma',
-      'amount': 147000.0,
-      'date': '2025-08-12',
-      'status': 'Completed',
-    },
-    {
-      'type': 'Salary Collected',
-      'user': 'Priya Thapa',
-      'amount': 83300.0,
-      'date': '2025-08-11',
-      'status': 'Completed',
-    },
-    {
-      'type': 'Loan Application',
-      'user': 'Krishna Tamang',
-      'amount': 147000.0,
-      'date': '2025-08-10',
-      'status': 'Pending',
-    },
-  ];
+  @override
+  void dispose() {
+    _loansSubscription?.cancel();
+    _kycSubscription?.cancel();
+    _usersSubscription?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _checkAdminAndLoadData() async {
+    setState(() => _loading = true);
+
+    final isAdmin = await _adminService.isAdmin();
+    if (isAdmin) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Access denied. Admin privileges required.'),
+          ),
+        );
+        Navigator.pushReplacementNamed(context, '/user-dashboard');
+      }
+      return;
+    }
+
+    await _loadDashboardData();
+    _setupStreamListeners();
+
+    setState(() => _loading = false);
+  }
+
+  Future<void> _loadDashboardData() async {
+    try {
+      final stats = await _adminService.getDashboardStats();
+      final activities = await _adminService.getRecentActivities();
+
+      setState(() {
+        _dashboardStats = stats;
+        _recentActivities = activities;
+      });
+    } catch (e) {
+      if (kDebugMode) print('Error loading dashboard data: $e');
+    }
+  }
+
+  void _setupStreamListeners() {
+    // Loans stream
+    _loansSubscription = _adminService.getLoanApplicationsStream().listen((
+      snapshot,
+    ) {
+      if (mounted) {
+        setState(() {
+          _loans = snapshot.docs
+              .map(
+                (doc) => LoanModel.fromMap(doc.data() as Map<String, dynamic>),
+              )
+              .toList();
+        });
+      }
+    });
+
+    // KYC stream
+    _kycSubscription = _adminService.getKYCApplicationsStream().listen((
+      snapshot,
+    ) {
+      if (mounted) {
+        setState(() {
+          _kycApplications = snapshot.docs
+              .map(
+                (doc) => KYCModel.fromMap(doc.data() as Map<String, dynamic>),
+              )
+              .toList();
+        });
+      }
+    });
+
+    // Users stream
+    _usersSubscription = _adminService.getUsersStream().listen((snapshot) {
+      if (mounted) {
+        setState(() {
+          _users = snapshot.docs
+              .map(
+                (doc) => UserModel.fromMap(doc.data() as Map<String, dynamic>),
+              )
+              .toList();
+        });
+      }
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
+    if (_loading) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
+
     return Scaffold(
       backgroundColor: const Color(0xFFF5F7FA),
       body: Row(
         children: [
-          // Sidebar
           _buildSidebar(),
-          // Main Content
           Expanded(child: _buildMainContent()),
         ],
       ),
@@ -129,7 +157,6 @@ class _AdminDashboardState extends State<AdminDashboard> {
       color: Colors.white,
       child: Column(
         children: [
-          // Logo Section
           Container(
             padding: const EdgeInsets.all(24),
             decoration: BoxDecoration(
@@ -138,40 +165,98 @@ class _AdminDashboardState extends State<AdminDashboard> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  'PayAdvance Admin',
-                  style: GoogleFonts.workSans(
-                    fontSize: 22,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.orange.shade600,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  'Management Dashboard',
-                  style: GoogleFonts.workSans(
-                    fontSize: 14,
-                    color: Colors.grey.shade600,
-                  ),
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: Colors.red.shade100,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Icon(
+                        Icons.admin_panel_settings,
+                        color: Colors.red.shade700,
+                        size: 24,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Admin Panel',
+                          style: GoogleFonts.workSans(
+                            fontSize: 20,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.red.shade700,
+                          ),
+                        ),
+                        Text(
+                          'PayAdvance',
+                          style: GoogleFonts.workSans(
+                            fontSize: 12,
+                            color: Colors.grey.shade600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
                 ),
               ],
             ),
           ),
-
-          // Navigation
           Expanded(
             child: Padding(
               padding: const EdgeInsets.all(16),
               child: Column(
                 children: [
-                  _buildNavItem(0, Icons.dashboard, 'Overview'),
-                  _buildNavItem(1, Icons.pending_actions, 'Applications'),
-                  _buildNavItem(2, Icons.people_outline, 'Users'),
-                  _buildNavItem(3, Icons.analytics_outlined, 'Analytics'),
-                  _buildNavItem(4, Icons.account_balance_wallet, 'Financial'),
-                  _buildNavItem(5, Icons.settings_outlined, 'Settings'),
+                  _buildNavItem(
+                    0,
+                    Icons.dashboard,
+                    'Dashboard',
+                    _dashboardStats['pendingLoans'] ?? 0,
+                  ),
+                  _buildNavItem(
+                    1,
+                    Icons.credit_card,
+                    'Loan Management',
+                    _loans.where((l) => l.status == 'pending').length,
+                  ),
+                  _buildNavItem(
+                    2,
+                    Icons.verified_user,
+                    'KYC Management',
+                    _kycApplications.where((k) => !k.verified).length,
+                  ),
+                  _buildNavItem(3, Icons.people, 'User Management', 0),
+                  _buildNavItem(4, Icons.analytics, 'Analytics', 0),
+                  _buildNavItem(5, Icons.notifications, 'Notifications', 0),
+                  _buildNavItem(6, Icons.settings, 'Settings', 0),
                   const Spacer(),
-                  _buildNavItem(6, Icons.logout, 'Sign Out', isLogout: true),
+                  Container(
+                    width: double.infinity,
+                    margin: const EdgeInsets.only(top: 16),
+                    child: ElevatedButton.icon(
+                      onPressed: _showLogoutDialog,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.red.shade50,
+                        foregroundColor: Colors.red.shade600,
+                        elevation: 0,
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      icon: const Icon(Icons.logout, size: 20),
+                      label: Text(
+                        'Sign Out',
+                        style: GoogleFonts.workSans(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -181,30 +266,19 @@ class _AdminDashboardState extends State<AdminDashboard> {
     );
   }
 
-  Widget _buildNavItem(
-    int index,
-    IconData icon,
-    String title, {
-    bool isLogout = false,
-  }) {
-    final isSelected = _selectedIndex == index && !isLogout;
+  Widget _buildNavItem(int index, IconData icon, String title, int badgeCount) {
+    final isSelected = _selectedIndex == index;
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       child: Material(
         color: Colors.transparent,
         child: InkWell(
-          onTap: () {
-            if (isLogout) {
-              // Handle logout
-            } else {
-              setState(() => _selectedIndex = index);
-            }
-          },
+          onTap: () => setState(() => _selectedIndex = index),
           borderRadius: BorderRadius.circular(12),
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
             decoration: BoxDecoration(
-              color: isSelected ? Colors.orange.shade50 : Colors.transparent,
+              color: isSelected ? Colors.red.shade50 : Colors.transparent,
               borderRadius: BorderRadius.circular(12),
             ),
             child: Row(
@@ -212,21 +286,44 @@ class _AdminDashboardState extends State<AdminDashboard> {
                 Icon(
                   icon,
                   color: isSelected
-                      ? Colors.orange.shade700
+                      ? Colors.red.shade700
                       : Colors.grey.shade600,
                   size: 20,
                 ),
                 const SizedBox(width: 12),
-                Text(
-                  title,
-                  style: GoogleFonts.workSans(
-                    fontSize: 14,
-                    fontWeight: isSelected ? FontWeight.w600 : FontWeight.w400,
-                    color: isSelected
-                        ? Colors.orange.shade700
-                        : Colors.grey.shade700,
+                Expanded(
+                  child: Text(
+                    title,
+                    style: GoogleFonts.workSans(
+                      fontSize: 14,
+                      fontWeight: isSelected
+                          ? FontWeight.w600
+                          : FontWeight.w400,
+                      color: isSelected
+                          ? Colors.red.shade700
+                          : Colors.grey.shade700,
+                    ),
                   ),
                 ),
+                if (badgeCount > 0)
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 2,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.red.shade600,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Text(
+                      badgeCount.toString(),
+                      style: GoogleFonts.workSans(
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ),
               ],
             ),
           ),
@@ -241,11 +338,8 @@ class _AdminDashboardState extends State<AdminDashboard> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Header
           _buildHeader(),
           const SizedBox(height: 24),
-
-          // Content based on selected tab
           Expanded(child: _getSelectedContent()),
         ],
       ),
@@ -291,42 +385,36 @@ class _AdminDashboardState extends State<AdminDashboard> {
                   ),
                 ],
               ),
-              child: Icon(
-                Icons.notifications_outlined,
-                color: Colors.grey.shade600,
+              child: Stack(
+                children: [
+                  Icon(
+                    Icons.notifications_outlined,
+                    color: Colors.grey.shade600,
+                  ),
+                  if ((_dashboardStats['pendingLoans'] ?? 0) > 0)
+                    Positioned(
+                      right: 0,
+                      top: 0,
+                      child: Container(
+                        width: 8,
+                        height: 8,
+                        decoration: BoxDecoration(
+                          color: Colors.red,
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                      ),
+                    ),
+                ],
               ),
             ),
             const SizedBox(width: 12),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              decoration: BoxDecoration(
-                color: Colors.orange.shade50,
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: Colors.orange.shade200),
-              ),
-              child: Row(
-                children: [
-                  CircleAvatar(
-                    radius: 16,
-                    backgroundColor: Colors.orange.shade100,
-                    child: Text(
-                      'A',
-                      style: GoogleFonts.workSans(
-                        fontWeight: FontWeight.bold,
-                        color: Colors.orange.shade700,
-                        fontSize: 14,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Text(
-                    'Admin',
-                    style: GoogleFonts.workSans(
-                      fontWeight: FontWeight.w600,
-                      color: Colors.orange.shade700,
-                    ),
-                  ),
-                ],
+            CircleAvatar(
+              radius: 20,
+              backgroundColor: Colors.red.shade100,
+              child: Icon(
+                Icons.admin_panel_settings,
+                color: Colors.red.shade700,
+                size: 20,
               ),
             ),
           ],
@@ -338,17 +426,19 @@ class _AdminDashboardState extends State<AdminDashboard> {
   String _getPageTitle() {
     switch (_selectedIndex) {
       case 0:
-        return 'Dashboard Overview';
+        return 'Dashboard';
       case 1:
-        return 'Loan Applications';
+        return 'Loan Management';
       case 2:
-        return 'User Management';
+        return 'KYC Management';
       case 3:
-        return 'Analytics & Reports';
+        return 'User Management';
       case 4:
-        return 'Financial Overview';
+        return 'Analytics';
       case 5:
-        return 'System Settings';
+        return 'Notifications';
+      case 6:
+        return 'Settings';
       default:
         return 'Dashboard';
     }
@@ -357,17 +447,19 @@ class _AdminDashboardState extends State<AdminDashboard> {
   String _getPageSubtitle() {
     switch (_selectedIndex) {
       case 0:
-        return 'Monitor your business performance';
+        return 'Overview of system activities and statistics';
       case 1:
-        return 'Review and manage loan applications';
+        return 'Manage loan applications and approvals';
       case 2:
-        return 'Manage users and their accounts';
+        return 'Review and verify KYC documents';
       case 3:
-        return 'View detailed analytics and insights';
+        return 'Manage user accounts and permissions';
       case 4:
-        return 'Track revenue and financial health';
+        return 'View detailed analytics and reports';
       case 5:
-        return 'Configure system preferences';
+        return 'Send notifications to users';
+      case 6:
+        return 'System settings and configuration';
       default:
         return '';
     }
@@ -376,23 +468,26 @@ class _AdminDashboardState extends State<AdminDashboard> {
   Widget _getSelectedContent() {
     switch (_selectedIndex) {
       case 0:
-        return _buildOverviewContent();
+        return _buildDashboardContent();
       case 1:
-        return _buildApplicationsContent();
+        return _buildLoanManagementContent();
       case 2:
-        return _buildUsersContent();
+        return _buildKYCManagementContent();
       case 3:
-        return _buildAnalyticsContent();
+        return _buildUserManagementContent();
       case 4:
-        return _buildFinancialContent();
+        return _buildAnalyticsContent();
       case 5:
+        return _buildNotificationsContent();
+      case 6:
         return _buildSettingsContent();
       default:
-        return _buildOverviewContent();
+        return _buildDashboardContent();
     }
   }
 
-  Widget _buildOverviewContent() {
+  // ---------- Dashboard Content ----------
+  Widget _buildDashboardContent() {
     return SingleChildScrollView(
       child: Column(
         children: [
@@ -401,65 +496,103 @@ class _AdminDashboardState extends State<AdminDashboard> {
             children: [
               Expanded(
                 child: _buildStatCard(
-                  'Total Loans',
-                  'रु ${(adminStats['totalLoans'] / 100000).toStringAsFixed(1)}L',
-                  Icons.account_balance_wallet,
+                  'Total Users',
+                  _dashboardStats['totalUsers']?.toString() ?? '0',
+                  Icons.people,
                   Colors.blue,
-                  '+12%',
+                  '+${_dashboardStats['newUsersThisMonth'] ?? 0} this month',
+                ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: _buildStatCard(
+                  'Total Loans',
+                  _dashboardStats['totalLoans']?.toString() ?? '0',
+                  Icons.credit_card,
+                  Colors.green,
+                  '+${_dashboardStats['newLoansThisWeek'] ?? 0} this week',
                 ),
               ),
               const SizedBox(width: 16),
               Expanded(
                 child: _buildStatCard(
                   'Active Loans',
-                  'रु ${(adminStats['activeLoans'] / 100000).toStringAsFixed(1)}L',
+                  _dashboardStats['activeLoans']?.toString() ?? '0',
                   Icons.trending_up,
-                  Colors.green,
-                  '+8%',
-                ),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: _buildStatCard(
-                  'Total Users',
-                  '${adminStats['totalUsers']}',
-                  Icons.people,
-                  Colors.purple,
-                  '+15%',
-                ),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: _buildStatCard(
-                  'Pending Apps',
-                  '${adminStats['pendingApplications']}',
-                  Icons.pending_actions,
                   Colors.orange,
-                  '+3',
+                  'Currently active',
+                ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: _buildStatCard(
+                  'Pending Approvals',
+                  (_dashboardStats['pendingLoans'] ??
+                          0 + _dashboardStats['pendingKYC'] ??
+                          0)
+                      .toString(),
+                  Icons.pending,
+                  Colors.red,
+                  'Requires action',
                 ),
               ),
             ],
           ),
           const SizedBox(height: 24),
 
-          // Recent Activity & Quick Actions
+          // Secondary Stats
+          Row(
+            children: [
+              Expanded(
+                child: _buildStatCard(
+                  'Total Loan Amount',
+                  'रु ${(_dashboardStats['totalLoanAmount'] ?? 0.0).toStringAsFixed(0)}',
+                  Icons.account_balance,
+                  Colors.purple,
+                  'Outstanding amount',
+                ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: _buildStatCard(
+                  'Verified KYC',
+                  _dashboardStats['verifiedKYC']?.toString() ?? '0',
+                  Icons.verified_user,
+                  Colors.teal,
+                  '${_dashboardStats['pendingKYC'] ?? 0} pending',
+                ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: _buildStatCard(
+                  'Pending Loans',
+                  _dashboardStats['pendingLoans']?.toString() ?? '0',
+                  Icons.schedule,
+                  Colors.amber,
+                  'Awaiting review',
+                ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: _buildStatCard(
+                  'Success Rate',
+                  '${_calculateSuccessRate()}%',
+                  Icons.check_circle,
+                  Colors.green,
+                  'Approval rate',
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 24),
+
+          // Recent Activities and Quick Actions
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Expanded(flex: 2, child: _buildRecentActivityCard()),
+              Expanded(flex: 2, child: _buildRecentActivitiesCard()),
               const SizedBox(width: 16),
               Expanded(child: _buildQuickActionsCard()),
-            ],
-          ),
-          const SizedBox(height: 24),
-
-          // Pending Applications & System Health
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(child: _buildPendingApplicationsCard()),
-              const SizedBox(width: 16),
-              Expanded(child: _buildSystemHealthCard()),
             ],
           ),
         ],
@@ -467,12 +600,19 @@ class _AdminDashboardState extends State<AdminDashboard> {
     );
   }
 
+  int _calculateSuccessRate() {
+    final total = _dashboardStats['totalLoans'] ?? 0;
+    final approved = _dashboardStats['activeLoans'] ?? 0;
+    if (total == 0) return 0;
+    return ((approved / total) * 100).round();
+  }
+
   Widget _buildStatCard(
     String title,
     String value,
     IconData icon,
     Color color,
-    String change,
+    String subtitle,
   ) {
     return Container(
       padding: const EdgeInsets.all(20),
@@ -501,38 +641,32 @@ class _AdminDashboardState extends State<AdminDashboard> {
                 ),
                 child: Icon(icon, color: color, size: 24),
               ),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: Colors.green.shade50,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Text(
-                  change,
-                  style: GoogleFonts.workSans(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.green.shade600,
-                  ),
-                ),
-              ),
             ],
           ),
           const SizedBox(height: 16),
           Text(
-            title,
+            value,
             style: GoogleFonts.workSans(
-              fontSize: 14,
-              color: Colors.grey.shade600,
+              fontSize: 28,
+              fontWeight: FontWeight.bold,
+              color: Colors.grey.shade800,
             ),
           ),
           const SizedBox(height: 4),
           Text(
-            value,
+            title,
             style: GoogleFonts.workSans(
-              fontSize: 24,
-              fontWeight: FontWeight.bold,
-              color: Colors.grey.shade800,
+              fontSize: 14,
+              fontWeight: FontWeight.w500,
+              color: Colors.grey.shade600,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            subtitle,
+            style: GoogleFonts.workSans(
+              fontSize: 12,
+              color: Colors.grey.shade500,
             ),
           ),
         ],
@@ -540,7 +674,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
     );
   }
 
-  Widget _buildRecentActivityCard() {
+  Widget _buildRecentActivitiesCard() {
     return Container(
       padding: const EdgeInsets.all(24),
       decoration: BoxDecoration(
@@ -561,7 +695,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Text(
-                'Recent Activity',
+                'Recent Activities',
                 style: GoogleFonts.workSans(
                   fontSize: 18,
                   fontWeight: FontWeight.bold,
@@ -569,52 +703,82 @@ class _AdminDashboardState extends State<AdminDashboard> {
                 ),
               ),
               TextButton(
-                onPressed: () {},
+                onPressed: () {}, // Implement view all
                 child: Text(
                   'View All',
-                  style: GoogleFonts.workSans(
-                    fontSize: 14,
-                    color: Colors.orange.shade600,
-                  ),
+                  style: GoogleFonts.workSans(color: Colors.red.shade600),
                 ),
               ),
             ],
           ),
           const SizedBox(height: 16),
-          ...recentTransactions.map(
-            (transaction) => _buildActivityItem(transaction),
-          ),
+          if (_recentActivities.isEmpty)
+            Center(
+              child: Padding(
+                padding: const EdgeInsets.all(32),
+                child: Text(
+                  'No recent activities',
+                  style: GoogleFonts.workSans(color: Colors.grey.shade500),
+                ),
+              ),
+            )
+          else
+            ListView.builder(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              itemCount: _recentActivities.take(5).length,
+              itemBuilder: (context, index) {
+                final activity = _recentActivities[index];
+                return _buildActivityItem(activity);
+              },
+            ),
         ],
       ),
     );
   }
 
-  Widget _buildActivityItem(Map<String, dynamic> transaction) {
-    Color statusColor = transaction['status'] == 'Completed'
-        ? Colors.green
-        : Colors.orange;
-    IconData icon = transaction['type'] == 'Loan Disbursed'
-        ? Icons.arrow_upward
-        : transaction['type'] == 'Salary Collected'
-        ? Icons.arrow_downward
-        : Icons.pending;
+  Widget _buildActivityItem(Map<String, dynamic> activity) {
+    final type = activity['type'] as String;
+    final status = activity['status'] as String;
+
+    IconData icon;
+    Color color;
+
+    switch (type) {
+      case 'loan':
+        icon = Icons.credit_card;
+        color = status == 'approved'
+            ? Colors.green
+            : status == 'declined'
+            ? Colors.red
+            : Colors.orange;
+        break;
+      case 'kyc':
+        icon = Icons.verified_user;
+        color = status == 'verified' ? Colors.green : Colors.blue;
+        break;
+      default:
+        icon = Icons.info;
+        color = Colors.grey;
+    }
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: Colors.grey.shade50,
+        color: color.withOpacity(0.05),
         borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color.withOpacity(0.2)),
       ),
       child: Row(
         children: [
           Container(
             padding: const EdgeInsets.all(8),
             decoration: BoxDecoration(
-              color: statusColor.withOpacity(0.1),
+              color: color.withOpacity(0.1),
               borderRadius: BorderRadius.circular(6),
             ),
-            child: Icon(icon, size: 16, color: statusColor),
+            child: Icon(icon, size: 16, color: color),
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -622,7 +786,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  transaction['type'],
+                  activity['title'] as String,
                   style: GoogleFonts.workSans(
                     fontSize: 14,
                     fontWeight: FontWeight.w600,
@@ -630,41 +794,37 @@ class _AdminDashboardState extends State<AdminDashboard> {
                   ),
                 ),
                 Text(
-                  '${transaction['user']} - रु ${transaction['amount'].toStringAsFixed(0)}',
+                  activity['description'] as String,
                   style: GoogleFonts.workSans(
                     fontSize: 12,
                     color: Colors.grey.shade600,
                   ),
                 ),
+                if (activity['createdAt'] != null)
+                  Text(
+                    _formatDateTime(activity['createdAt'] as DateTime),
+                    style: GoogleFonts.workSans(
+                      fontSize: 11,
+                      color: Colors.grey.shade500,
+                    ),
+                  ),
               ],
             ),
           ),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Text(
-                transaction['date'],
-                style: GoogleFonts.workSans(
-                  fontSize: 12,
-                  color: Colors.grey.shade500,
-                ),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            decoration: BoxDecoration(
+              color: color.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Text(
+              status.toUpperCase(),
+              style: GoogleFonts.workSans(
+                fontSize: 10,
+                fontWeight: FontWeight.bold,
+                color: color,
               ),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                decoration: BoxDecoration(
-                  color: statusColor.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Text(
-                  transaction['status'],
-                  style: GoogleFonts.workSans(
-                    fontSize: 10,
-                    fontWeight: FontWeight.w600,
-                    color: statusColor,
-                  ),
-                ),
-              ),
-            ],
+            ),
           ),
         ],
       ),
@@ -697,399 +857,124 @@ class _AdminDashboardState extends State<AdminDashboard> {
             ),
           ),
           const SizedBox(height: 20),
-          _buildActionButton(
-            'Review Applications',
+          _buildQuickActionButton(
+            'Review Pending Loans',
             Icons.rate_review,
             Colors.orange,
+            () => setState(() => _selectedIndex = 1),
           ),
-          const SizedBox(width: 12),
-          _buildActionButton('Add New User', Icons.person_add, Colors.blue),
-          const SizedBox(width: 12),
-          _buildActionButton('Generate Report', Icons.assessment, Colors.green),
-          const SizedBox(width: 12),
-          _buildActionButton('System Settings', Icons.settings, Colors.purple),
-          const SizedBox(width: 12),
-          _buildActionButton('Export Data', Icons.download, Colors.grey),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildActionButton(String title, IconData icon, Color color) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      child: SizedBox(
-        width: double.infinity,
-        child: ElevatedButton(
-          onPressed: () {},
-          style: ElevatedButton.styleFrom(
-            backgroundColor: color.withOpacity(0.1),
-            foregroundColor: color,
-            elevation: 0,
-            padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(8),
-            ),
-          ),
-          child: Row(
-            children: [
-              Icon(icon, size: 16),
-              const SizedBox(width: 8),
-              Text(
-                title,
-                style: GoogleFonts.workSans(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildPendingApplicationsCard() {
-    return Container(
-      padding: const EdgeInsets.all(24),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.grey.shade200,
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                'Pending Applications',
-                style: GoogleFonts.workSans(
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.grey.shade800,
-                ),
-              ),
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 6,
-                ),
-                decoration: BoxDecoration(
-                  color: Colors.orange.shade50,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Text(
-                  '${pendingApplications.length} Pending',
-                  style: GoogleFonts.workSans(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.orange.shade700,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          ...pendingApplications
-              .take(3)
-              .map((app) => _buildApplicationItem(app)),
           const SizedBox(height: 12),
-          SizedBox(
-            width: double.infinity,
-            child: ElevatedButton(
-              onPressed: () => setState(() => _selectedIndex = 1),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.orange.shade600,
-                padding: const EdgeInsets.symmetric(vertical: 12),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8),
-                ),
-              ),
-              child: Text(
-                'View All Applications',
-                style: GoogleFonts.workSans(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                  color: Colors.white,
-                ),
-              ),
-            ),
+          _buildQuickActionButton(
+            'Verify KYC Documents',
+            Icons.verified_user,
+            Colors.blue,
+            () => setState(() => _selectedIndex = 2),
+          ),
+          const SizedBox(height: 12),
+          _buildQuickActionButton(
+            'Send Notification',
+            Icons.notifications,
+            Colors.green,
+            () => setState(() => _selectedIndex = 5),
+          ),
+          const SizedBox(height: 12),
+          _buildQuickActionButton(
+            'View Analytics',
+            Icons.analytics,
+            Colors.purple,
+            () => setState(() => _selectedIndex = 4),
+          ),
+          const SizedBox(height: 12),
+          _buildQuickActionButton(
+            'Manage Users',
+            Icons.people,
+            Colors.teal,
+            () => setState(() => _selectedIndex = 3),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildApplicationItem(Map<String, dynamic> app) {
-    Color riskColor = app['riskScore'] == 'Low'
-        ? Colors.green
-        : app['riskScore'] == 'Medium'
-        ? Colors.orange
-        : Colors.red;
-
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Colors.grey.shade50,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.grey.shade200),
-      ),
-      child: Row(
-        children: [
-          CircleAvatar(
-            radius: 20,
-            backgroundColor: Colors.blue.shade100,
-            child: Text(
-              app['userName'][0],
-              style: GoogleFonts.workSans(
-                fontWeight: FontWeight.bold,
-                color: Colors.blue.shade700,
-              ),
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  app['userName'],
-                  style: GoogleFonts.workSans(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.grey.shade800,
-                  ),
-                ),
-                Text(
-                  'रु ${app['amount'].toStringAsFixed(0)} • ${app['duration']} month(s)',
-                  style: GoogleFonts.workSans(
-                    fontSize: 12,
-                    color: Colors.grey.shade600,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                decoration: BoxDecoration(
-                  color: riskColor.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Text(
-                  app['riskScore'],
-                  style: GoogleFonts.workSans(
-                    fontSize: 10,
-                    fontWeight: FontWeight.w600,
-                    color: riskColor,
-                  ),
-                ),
-              ),
-              Text(
-                app['appliedDate'],
-                style: GoogleFonts.workSans(
-                  fontSize: 11,
-                  color: Colors.grey.shade500,
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildSystemHealthCard() {
-    return Container(
-      padding: const EdgeInsets.all(24),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.grey.shade200,
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'System Health',
-            style: GoogleFonts.workSans(
-              fontSize: 18,
-              fontWeight: FontWeight.bold,
-              color: Colors.grey.shade800,
-            ),
-          ),
-          const SizedBox(height: 20),
-          _buildHealthMetric('Server Status', 'Online', Colors.green, 0.98),
-          const SizedBox(height: 16),
-          _buildHealthMetric('Payment Gateway', 'Active', Colors.green, 0.99),
-          const SizedBox(height: 16),
-          _buildHealthMetric('Database', 'Healthy', Colors.green, 0.95),
-          const SizedBox(height: 16),
-          _buildHealthMetric('SMS Service', 'Active', Colors.green, 0.97),
-          const SizedBox(height: 20),
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: Colors.green.shade50,
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: Colors.green.shade200),
-            ),
-            child: Row(
-              children: [
-                Icon(
-                  Icons.check_circle,
-                  color: Colors.green.shade600,
-                  size: 20,
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  'All systems operational',
-                  style: GoogleFonts.workSans(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.green.shade700,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildHealthMetric(
+  Widget _buildQuickActionButton(
     String title,
-    String status,
+    IconData icon,
     Color color,
-    double value,
+    VoidCallback onTap,
   ) {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: [
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+    return SizedBox(
+      width: double.infinity,
+      child: ElevatedButton(
+        onPressed: onTap,
+        style: ElevatedButton.styleFrom(
+          backgroundColor: color.withOpacity(0.1),
+          foregroundColor: color,
+          elevation: 0,
+          padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        ),
+        child: Row(
           children: [
+            Icon(icon, size: 16),
+            const SizedBox(width: 8),
             Text(
               title,
               style: GoogleFonts.workSans(
-                fontSize: 14,
+                fontSize: 13,
                 fontWeight: FontWeight.w500,
-                color: Colors.grey.shade700,
-              ),
-            ),
-            Text(
-              status,
-              style: GoogleFonts.workSans(
-                fontSize: 12,
-                color: color,
-                fontWeight: FontWeight.w600,
               ),
             ),
           ],
         ),
-        SizedBox(
-          width: 60,
-          height: 6,
-          child: LinearProgressIndicator(
-            value: value,
-            backgroundColor: Colors.grey.shade200,
-            valueColor: AlwaysStoppedAnimation<Color>(color),
-          ),
-        ),
-      ],
+      ),
     );
   }
 
-  Widget _buildApplicationsContent() {
-    return Container(
-      padding: const EdgeInsets.all(24),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.grey.shade200,
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
+  // ---------- Loan Management Content ----------
+  Widget _buildLoanManagementContent() {
+    final pendingLoans = _loans
+        .where((loan) => loan.status == 'pending')
+        .toList();
+    final approvedLoans = _loans
+        .where((loan) => loan.status == 'approved')
+        .toList();
+    final declinedLoans = _loans
+        .where((loan) => loan.status == 'declined')
+        .toList();
+
+    return DefaultTabController(
+      length: 4,
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                'Loan Applications',
-                style: GoogleFonts.workSans(
-                  fontSize: 20,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.grey.shade800,
-                ),
-              ),
-              Row(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 8,
-                    ),
-                    decoration: BoxDecoration(
-                      color: Colors.orange.shade50,
-                      borderRadius: BorderRadius.circular(20),
-                      border: Border.all(color: Colors.orange.shade200),
-                    ),
-                    child: Row(
-                      children: [
-                        Icon(
-                          Icons.filter_list,
-                          size: 16,
-                          color: Colors.orange.shade600,
-                        ),
-                        const SizedBox(width: 4),
-                        Text(
-                          'Filter',
-                          style: GoogleFonts.workSans(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                            color: Colors.orange.shade700,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ],
+          Container(
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(12),
+              boxShadow: [
+                BoxShadow(color: Colors.grey.shade200, blurRadius: 8),
+              ],
+            ),
+            child: TabBar(
+              tabs: [
+                Tab(text: 'All (${_loans.length})'),
+                Tab(text: 'Pending (${pendingLoans.length})'),
+                Tab(text: 'Approved (${approvedLoans.length})'),
+                Tab(text: 'Declined (${declinedLoans.length})'),
+              ],
+              labelColor: Colors.red.shade700,
+              unselectedLabelColor: Colors.grey.shade600,
+              indicatorColor: Colors.red.shade700,
+            ),
           ),
-          const SizedBox(height: 20),
+          const SizedBox(height: 16),
           Expanded(
-            child: ListView.builder(
-              itemCount: pendingApplications.length,
-              itemBuilder: (context, index) {
-                final app = pendingApplications[index];
-                return _buildDetailedApplicationCard(app);
-              },
+            child: TabBarView(
+              children: [
+                _buildLoansList(_loans),
+                _buildLoansList(pendingLoans),
+                _buildLoansList(approvedLoans),
+                _buildLoansList(declinedLoans),
+              ],
             ),
           ),
         ],
@@ -1097,300 +982,49 @@ class _AdminDashboardState extends State<AdminDashboard> {
     );
   }
 
-  Widget _buildDetailedApplicationCard(Map<String, dynamic> app) {
-    Color riskColor = app['riskScore'] == 'Low'
-        ? Colors.green
-        : app['riskScore'] == 'Medium'
-        ? Colors.orange
-        : Colors.red;
+  Widget _buildLoansList(List<LoanModel> loans) {
+    if (loans.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.credit_card_off, size: 64, color: Colors.grey.shade400),
+            const SizedBox(height: 16),
+            Text(
+              'No loans found',
+              style: GoogleFonts.workSans(
+                fontSize: 18,
+                fontWeight: FontWeight.w600,
+                color: Colors.grey.shade600,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
 
     return Container(
-      margin: const EdgeInsets.only(bottom: 16),
-      padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: Colors.grey.shade50,
+        color: Colors.white,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.grey.shade200),
+        boxShadow: [BoxShadow(color: Colors.grey.shade200, blurRadius: 8)],
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              CircleAvatar(
-                radius: 24,
-                backgroundColor: Colors.blue.shade100,
-                child: Text(
-                  app['userName'][0],
-                  style: GoogleFonts.workSans(
-                    fontWeight: FontWeight.bold,
-                    color: Colors.blue.shade700,
-                    fontSize: 18,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Text(
-                          app['userName'],
-                          style: GoogleFonts.workSans(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.grey.shade800,
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Text(
-                          '(${app['id']})',
-                          style: GoogleFonts.workSans(
-                            fontSize: 12,
-                            color: Colors.grey.shade500,
-                          ),
-                        ),
-                      ],
-                    ),
-                    Text(
-                      'Applied: ${app['appliedDate']}',
-                      style: GoogleFonts.workSans(
-                        fontSize: 12,
-                        color: Colors.grey.shade600,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 6,
-                ),
-                decoration: BoxDecoration(
-                  color: riskColor.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Text(
-                  app['riskScore'] + ' Risk',
-                  style: GoogleFonts.workSans(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    color: riskColor,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          Row(
-            children: [
-              Expanded(
-                child: _buildInfoItem(
-                  'Loan Amount',
-                  'रु ${app['amount'].toStringAsFixed(0)}',
-                ),
-              ),
-              Expanded(
-                child: _buildInfoItem(
-                  'Monthly Salary',
-                  'रु ${app['salary'].toStringAsFixed(0)}',
-                ),
-              ),
-              Expanded(
-                child: _buildInfoItem(
-                  'Duration',
-                  '${app['duration']} month(s)',
-                ),
-              ),
-              Expanded(
-                child: _buildInfoItem(
-                  'Documents',
-                  '${app['documents'].length} files',
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          Row(
-            children: [
-              Expanded(
-                child: ElevatedButton.icon(
-                  onPressed: () {},
-                  icon: const Icon(Icons.check, size: 16),
-                  label: Text(
-                    'Approve',
-                    style: GoogleFonts.workSans(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.green.shade600,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: ElevatedButton.icon(
-                  onPressed: () {},
-                  icon: const Icon(Icons.close, size: 16),
-                  label: Text(
-                    'Reject',
-                    style: GoogleFonts.workSans(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.red.shade600,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 12),
-              ElevatedButton.icon(
-                onPressed: () {},
-                icon: const Icon(Icons.visibility, size: 16),
-                label: Text(
-                  'View Details',
-                  style: GoogleFonts.workSans(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.blue.shade600,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(
-                    vertical: 12,
-                    horizontal: 16,
-                  ),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ],
+      child: ListView.builder(
+        itemCount: loans.length,
+        itemBuilder: (context, index) {
+          final loan = loans[index];
+          return _buildLoanCard(loan);
+        },
       ),
     );
   }
 
-  Widget _buildInfoItem(String title, String value) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          title,
-          style: GoogleFonts.workSans(
-            fontSize: 12,
-            color: Colors.grey.shade600,
-          ),
-        ),
-        const SizedBox(height: 4),
-        Text(
-          value,
-          style: GoogleFonts.workSans(
-            fontSize: 14,
-            fontWeight: FontWeight.w600,
-            color: Colors.grey.shade800,
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildUsersContent() {
-    return Container(
-      padding: const EdgeInsets.all(24),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.grey.shade200,
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                'User Management',
-                style: GoogleFonts.workSans(
-                  fontSize: 20,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.grey.shade800,
-                ),
-              ),
-              ElevatedButton.icon(
-                onPressed: () {},
-                icon: const Icon(Icons.person_add, size: 16),
-                label: Text(
-                  'Add User',
-                  style: GoogleFonts.workSans(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.orange.shade600,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(
-                    vertical: 12,
-                    horizontal: 16,
-                  ),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 20),
-          Expanded(
-            child: ListView.builder(
-              itemCount: recentUsers.length,
-              itemBuilder: (context, index) {
-                final user = recentUsers[index];
-                return _buildUserCard(user);
-              },
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildUserCard(Map<String, dynamic> user) {
-    Color statusColor = user['status'] == 'Active' ? Colors.green : Colors.red;
-    Color riskColor = user['riskLevel'] == 'Low'
-        ? Colors.green
-        : user['riskLevel'] == 'Medium'
-        ? Colors.orange
-        : Colors.red;
+  Widget _buildLoanCard(LoanModel loan) {
+    final statusColor = _getStatusColor(loan.status);
 
     return Container(
-      margin: const EdgeInsets.only(bottom: 16),
-      padding: const EdgeInsets.all(20),
+      margin: const EdgeInsets.all(8),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: Colors.grey.shade50,
         borderRadius: BorderRadius.circular(12),
@@ -1398,16 +1032,16 @@ class _AdminDashboardState extends State<AdminDashboard> {
       ),
       child: Row(
         children: [
-          CircleAvatar(
-            radius: 24,
-            backgroundColor: Colors.blue.shade100,
-            child: Text(
-              user['name'][0],
-              style: GoogleFonts.workSans(
-                fontWeight: FontWeight.bold,
-                color: Colors.blue.shade700,
-                fontSize: 18,
-              ),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: statusColor.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Icon(
+              _getStatusIcon(loan.status),
+              color: statusColor,
+              size: 24,
             ),
           ),
           const SizedBox(width: 16),
@@ -1415,23 +1049,55 @@ class _AdminDashboardState extends State<AdminDashboard> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  user['name'],
-                  style: GoogleFonts.workSans(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.grey.shade800,
-                  ),
+                Row(
+                  children: [
+                    Text(
+                      'रु ${loan.loanableAmount.toStringAsFixed(0)}',
+                      style: GoogleFonts.workSans(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.grey.shade800,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: statusColor.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Text(
+                        loan.status.toUpperCase(),
+                        style: GoogleFonts.workSans(
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold,
+                          color: statusColor,
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
+                const SizedBox(height: 4),
                 Text(
-                  'Salary: रु ${user['salary'].toStringAsFixed(0)}',
+                  'Duration: ${loan.durationMonths} months • Salary: रु${loan.monthlySalary.toStringAsFixed(0)}',
                   style: GoogleFonts.workSans(
                     fontSize: 14,
                     color: Colors.grey.shade600,
                   ),
                 ),
+                if (loan.reason.isNotEmpty)
+                  Text(
+                    'Purpose: ${loan.reason}',
+                    style: GoogleFonts.workSans(
+                      fontSize: 12,
+                      color: Colors.grey.shade500,
+                    ),
+                  ),
                 Text(
-                  'Joined: ${user['joinDate']} • ${user['totalLoans']} loans',
+                  'Applied: ${loan.createdAt != null ? _formatDateTime(loan.createdAt!) : 'N/A'}',
                   style: GoogleFonts.workSans(
                     fontSize: 12,
                     color: Colors.grey.shade500,
@@ -1441,39 +1107,60 @@ class _AdminDashboardState extends State<AdminDashboard> {
             ),
           ),
           Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
             children: [
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: statusColor.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Text(
-                  user['status'],
-                  style: GoogleFonts.workSans(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    color: statusColor,
+              ElevatedButton(
+                onPressed: () => _viewLoanDetails(loan),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.blue.shade600,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 8,
                   ),
                 ),
-              ),
-              const SizedBox(height: 4),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: riskColor.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(12),
-                ),
                 child: Text(
-                  user['riskLevel'] + ' Risk',
-                  style: GoogleFonts.workSans(
-                    fontSize: 10,
-                    fontWeight: FontWeight.w600,
-                    color: riskColor,
-                  ),
+                  'View Details',
+                  style: GoogleFonts.workSans(fontSize: 12),
                 ),
               ),
+              if (loan.status == 'pending') ...[
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    ElevatedButton(
+                      onPressed: () => _showApprovalDialog(loan, true),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.green.shade600,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 6,
+                        ),
+                      ),
+                      child: Text(
+                        'Approve',
+                        style: GoogleFonts.workSans(fontSize: 11),
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    ElevatedButton(
+                      onPressed: () => _showApprovalDialog(loan, false),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.red.shade600,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 6,
+                        ),
+                      ),
+                      child: Text(
+                        'Decline',
+                        style: GoogleFonts.workSans(fontSize: 11),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
             ],
           ),
         ],
@@ -1481,73 +1168,499 @@ class _AdminDashboardState extends State<AdminDashboard> {
     );
   }
 
+  // ---------- KYC Management Content ----------
+  Widget _buildKYCManagementContent() {
+    final pendingKYC = _kycApplications.where((kyc) => !kyc.verified).toList();
+    final verifiedKYC = _kycApplications.where((kyc) => kyc.verified).toList();
+
+    return DefaultTabController(
+      length: 3,
+      child: Column(
+        children: [
+          Container(
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(12),
+              boxShadow: [
+                BoxShadow(color: Colors.grey.shade200, blurRadius: 8),
+              ],
+            ),
+            child: TabBar(
+              tabs: [
+                Tab(text: 'All (${_kycApplications.length})'),
+                Tab(text: 'Pending (${pendingKYC.length})'),
+                Tab(text: 'Verified (${verifiedKYC.length})'),
+              ],
+              labelColor: Colors.red.shade700,
+              unselectedLabelColor: Colors.grey.shade600,
+              indicatorColor: Colors.red.shade700,
+            ),
+          ),
+          const SizedBox(height: 16),
+          Expanded(
+            child: TabBarView(
+              children: [
+                _buildKYCList(_kycApplications),
+                _buildKYCList(pendingKYC),
+                _buildKYCList(verifiedKYC),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildKYCList(List<KYCModel> kycList) {
+    if (kycList.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.verified_user_outlined,
+              size: 64,
+              color: Colors.grey.shade400,
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'No KYC applications found',
+              style: GoogleFonts.workSans(
+                fontSize: 18,
+                fontWeight: FontWeight.w600,
+                color: Colors.grey.shade600,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: [BoxShadow(color: Colors.grey.shade200, blurRadius: 8)],
+      ),
+      child: ListView.builder(
+        itemCount: kycList.length,
+        itemBuilder: (context, index) {
+          final kyc = kycList[index];
+          return _buildKYCCard(kyc);
+        },
+      ),
+    );
+  }
+
+  Widget _buildKYCCard(KYCModel kyc) {
+    final statusColor = kyc.verified ? Colors.green : Colors.orange;
+
+    return Container(
+      margin: const EdgeInsets.all(8),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.grey.shade50,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.grey.shade200),
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: statusColor.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Icon(
+              kyc.verified ? Icons.verified_user : Icons.pending,
+              color: statusColor,
+              size: 24,
+            ),
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Text(
+                      kyc.fullName,
+                      style: GoogleFonts.workSans(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.grey.shade800,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: statusColor.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Text(
+                        kyc.verified ? 'VERIFIED' : 'PENDING',
+                        style: GoogleFonts.workSans(
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold,
+                          color: statusColor,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Phone: ${kyc.phone}',
+                  style: GoogleFonts.workSans(
+                    fontSize: 14,
+                    color: Colors.grey.shade600,
+                  ),
+                ),
+                Text(
+                  'Citizenship: ${kyc.citizenshipNumber}',
+                  style: GoogleFonts.workSans(
+                    fontSize: 12,
+                    color: Colors.grey.shade500,
+                  ),
+                ),
+                Text(
+                  'Submitted: ${kyc.submittedAt != null ? _formatDateTime(kyc.submittedAt!) : 'N/A'}',
+                  style: GoogleFonts.workSans(
+                    fontSize: 12,
+                    color: Colors.grey.shade500,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Column(
+            children: [
+              ElevatedButton(
+                onPressed: () => _viewKYCDetails(kyc),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.blue.shade600,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 8,
+                  ),
+                ),
+                child: Text(
+                  'View Details',
+                  style: GoogleFonts.workSans(fontSize: 12),
+                ),
+              ),
+              if (!kyc.verified) ...[
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    ElevatedButton(
+                      onPressed: () => _showKYCApprovalDialog(kyc, true),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.green.shade600,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 6,
+                        ),
+                      ),
+                      child: Text(
+                        'Verify',
+                        style: GoogleFonts.workSans(fontSize: 11),
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    ElevatedButton(
+                      onPressed: () => _showKYCApprovalDialog(kyc, false),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.red.shade600,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 6,
+                        ),
+                      ),
+                      child: Text(
+                        'Decline',
+                        style: GoogleFonts.workSans(fontSize: 11),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ---------- User Management Content ----------
+  Widget _buildUserManagementContent() {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: [BoxShadow(color: Colors.grey.shade200, blurRadius: 8)],
+      ),
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    decoration: InputDecoration(
+                      hintText: 'Search users...',
+                      prefixIcon: const Icon(Icons.search),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                        borderSide: BorderSide(color: Colors.grey.shade300),
+                      ),
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                      ),
+                    ),
+                    onChanged: (value) {
+                      // Implement search functionality
+                    },
+                  ),
+                ),
+                const SizedBox(width: 16),
+                ElevatedButton.icon(
+                  onPressed: () {
+                    // Implement export functionality
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.red.shade600,
+                    foregroundColor: Colors.white,
+                  ),
+                  icon: const Icon(Icons.download, size: 16),
+                  label: Text('Export', style: GoogleFonts.workSans()),
+                ),
+              ],
+            ),
+          ),
+          const Divider(height: 1),
+          Expanded(
+            child: _users.isEmpty
+                ? Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          Icons.people_outline,
+                          size: 64,
+                          color: Colors.grey.shade400,
+                        ),
+                        const SizedBox(height: 16),
+                        Text(
+                          'No users found',
+                          style: GoogleFonts.workSans(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.grey.shade600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  )
+                : ListView.builder(
+                    itemCount: _users.length,
+                    itemBuilder: (context, index) {
+                      final user = _users[index];
+                      return _buildUserCard(user);
+                    },
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildUserCard(UserModel user) {
+    final isAdmin = user.role.toLowerCase() == 'admin';
+
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.grey.shade50,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.grey.shade200),
+      ),
+      child: Row(
+        children: [
+          CircleAvatar(
+            radius: 24,
+            backgroundColor: isAdmin
+                ? Colors.red.shade100
+                : Colors.blue.shade100,
+            child: Text(
+              user.displayName.isNotEmpty ? user.displayName[0] : user.email[0],
+              style: GoogleFonts.workSans(
+                fontWeight: FontWeight.bold,
+                color: isAdmin ? Colors.red.shade700 : Colors.blue.shade700,
+              ),
+            ),
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Text(
+                      user.displayName.isNotEmpty
+                          ? user.displayName
+                          : 'No Name',
+                      style: GoogleFonts.workSans(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.grey.shade800,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: isAdmin
+                            ? Colors.red.shade100
+                            : Colors.blue.shade100,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Text(
+                        user.role.toUpperCase(),
+                        style: GoogleFonts.workSans(
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold,
+                          color: isAdmin
+                              ? Colors.red.shade700
+                              : Colors.blue.shade700,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  user.email,
+                  style: GoogleFonts.workSans(
+                    fontSize: 14,
+                    color: Colors.grey.shade600,
+                  ),
+                ),
+                Text(
+                  'Joined: ${user.createdAt != null ? _formatDateTime(user.createdAt!) : 'N/A'}',
+                  style: GoogleFonts.workSans(
+                    fontSize: 12,
+                    color: Colors.grey.shade500,
+                  ),
+                ),
+                if (user.lastOnline != null)
+                  Text(
+                    'Last online: ${_formatDateTime(user.lastOnline!)}',
+                    style: GoogleFonts.workSans(
+                      fontSize: 12,
+                      color: Colors.grey.shade500,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          ElevatedButton(
+            onPressed: () => _viewUserDetails(user),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.blue.shade600,
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            ),
+            child: Text(
+              'View Details',
+              style: GoogleFonts.workSans(fontSize: 12),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ---------- Analytics Content ----------
   Widget _buildAnalyticsContent() {
     return SingleChildScrollView(
       child: Column(
         children: [
-          // Monthly Performance Cards
+          // Summary Cards
           Row(
             children: [
               Expanded(
                 child: _buildAnalyticsCard(
-                  'Monthly Revenue',
-                  'रु 75,000',
-                  '+18%',
+                  'Loan Approval Rate',
+                  '${_calculateSuccessRate()}%',
+                  Icons.trending_up,
                   Colors.green,
+                  'This month: +5%',
                 ),
               ),
               const SizedBox(width: 16),
               Expanded(
                 child: _buildAnalyticsCard(
-                  'Default Rate',
-                  '2.5%',
-                  '-0.8%',
-                  Colors.red,
-                ),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: _buildAnalyticsCard(
-                  'New Users',
-                  '23',
-                  '+15%',
+                  'Average Loan Amount',
+                  'रु ${_calculateAverageLoanAmount()}',
+                  Icons.account_balance,
                   Colors.blue,
+                  'Per application',
                 ),
               ),
               const SizedBox(width: 16),
               Expanded(
                 child: _buildAnalyticsCard(
-                  'Approval Rate',
-                  '87%',
-                  '+5%',
+                  'KYC Verification Rate',
+                  '${_calculateKYCRate()}%',
+                  Icons.verified_user,
+                  Colors.teal,
+                  'Total verified',
+                ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: _buildAnalyticsCard(
+                  'Active Users',
+                  '${_users.length}',
+                  Icons.people,
                   Colors.purple,
+                  'Total registered',
                 ),
               ),
             ],
           ),
           const SizedBox(height: 24),
 
-          // Charts placeholder
+          // Charts and Detailed Analytics would go here
           Container(
-            width: double.infinity,
-            height: 400,
             padding: const EdgeInsets.all(24),
             decoration: BoxDecoration(
               color: Colors.white,
               borderRadius: BorderRadius.circular(16),
               boxShadow: [
-                BoxShadow(
-                  color: Colors.grey.shade200,
-                  blurRadius: 8,
-                  offset: const Offset(0, 2),
-                ),
+                BoxShadow(color: Colors.grey.shade200, blurRadius: 8),
               ],
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Analytics Charts',
+                  'Detailed Analytics',
                   style: GoogleFonts.workSans(
                     fontSize: 20,
                     fontWeight: FontWeight.bold,
@@ -1555,33 +1668,30 @@ class _AdminDashboardState extends State<AdminDashboard> {
                   ),
                 ),
                 const SizedBox(height: 20),
-                Expanded(
-                  child: Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(
-                          Icons.analytics,
-                          size: 64,
-                          color: Colors.grey.shade400,
+                Center(
+                  child: Column(
+                    children: [
+                      Icon(
+                        Icons.bar_chart,
+                        size: 64,
+                        color: Colors.grey.shade400,
+                      ),
+                      const SizedBox(height: 16),
+                      Text(
+                        'Advanced analytics charts will be implemented here',
+                        style: GoogleFonts.workSans(
+                          color: Colors.grey.shade600,
+                          fontSize: 16,
                         ),
-                        const SizedBox(height: 16),
-                        Text(
-                          'Charts and Graphs will be implemented here',
-                          style: GoogleFonts.workSans(
-                            fontSize: 16,
-                            color: Colors.grey.shade600,
-                          ),
+                      ),
+                      Text(
+                        'Including loan trends, user growth, and financial metrics',
+                        style: GoogleFonts.workSans(
+                          color: Colors.grey.shade500,
+                          fontSize: 14,
                         ),
-                        Text(
-                          'Revenue trends, user growth, loan distribution, etc.',
-                          style: GoogleFonts.workSans(
-                            fontSize: 14,
-                            color: Colors.grey.shade500,
-                          ),
-                        ),
-                      ],
-                    ),
+                      ),
+                    ],
                   ),
                 ),
               ],
@@ -1595,168 +1705,16 @@ class _AdminDashboardState extends State<AdminDashboard> {
   Widget _buildAnalyticsCard(
     String title,
     String value,
-    String change,
-    Color color,
-  ) {
-    bool isPositive = change.startsWith('+');
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.grey.shade200,
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            title,
-            style: GoogleFonts.workSans(
-              fontSize: 14,
-              color: Colors.grey.shade600,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            value,
-            style: GoogleFonts.workSans(
-              fontSize: 24,
-              fontWeight: FontWeight.bold,
-              color: Colors.grey.shade800,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Row(
-            children: [
-              Icon(
-                isPositive ? Icons.trending_up : Icons.trending_down,
-                size: 16,
-                color: isPositive ? Colors.green : Colors.red,
-              ),
-              const SizedBox(width: 4),
-              Text(
-                change,
-                style: GoogleFonts.workSans(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                  color: isPositive ? Colors.green : Colors.red,
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildFinancialContent() {
-    return SingleChildScrollView(
-      child: Column(
-        children: [
-          // Financial Overview Cards
-          Row(
-            children: [
-              Expanded(
-                child: _buildFinancialCard(
-                  'Total Revenue',
-                  'रु 12.5L',
-                  Icons.trending_up,
-                  Colors.green,
-                ),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: _buildFinancialCard(
-                  'Outstanding',
-                  'रु 8.9L',
-                  Icons.account_balance,
-                  Colors.orange,
-                ),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: _buildFinancialCard(
-                  'Collections',
-                  'रु 3.2L',
-                  Icons.payments,
-                  Colors.blue,
-                ),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: _buildFinancialCard(
-                  'Profit Margin',
-                  '18.5%',
-                  Icons.pie_chart,
-                  Colors.purple,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 24),
-
-          // Recent Transactions
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(24),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(16),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.grey.shade200,
-                  blurRadius: 8,
-                  offset: const Offset(0, 2),
-                ),
-              ],
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Financial Transactions',
-                  style: GoogleFonts.workSans(
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.grey.shade800,
-                  ),
-                ),
-                const SizedBox(height: 20),
-                ...recentTransactions.map(
-                  (transaction) => _buildFinancialTransactionItem(transaction),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildFinancialCard(
-    String title,
-    String value,
     IconData icon,
     Color color,
+    String subtitle,
   ) {
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.grey.shade200,
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
+        boxShadow: [BoxShadow(color: Colors.grey.shade200, blurRadius: 8)],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1771,14 +1729,6 @@ class _AdminDashboardState extends State<AdminDashboard> {
           ),
           const SizedBox(height: 16),
           Text(
-            title,
-            style: GoogleFonts.workSans(
-              fontSize: 14,
-              color: Colors.grey.shade600,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
             value,
             style: GoogleFonts.workSans(
               fontSize: 24,
@@ -1786,226 +1736,706 @@ class _AdminDashboardState extends State<AdminDashboard> {
               color: Colors.grey.shade800,
             ),
           ),
+          const SizedBox(height: 4),
+          Text(
+            title,
+            style: GoogleFonts.workSans(
+              fontSize: 14,
+              fontWeight: FontWeight.w500,
+              color: Colors.grey.shade600,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            subtitle,
+            style: GoogleFonts.workSans(fontSize: 12, color: color),
+          ),
         ],
       ),
     );
   }
 
-  Widget _buildFinancialTransactionItem(Map<String, dynamic> transaction) {
-    Color statusColor = transaction['status'] == 'Completed'
-        ? Colors.green
-        : Colors.orange;
-    bool isIncoming = transaction['type'] == 'Salary Collected';
-
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.grey.shade50,
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Row(
+  // ---------- Notifications Content ----------
+  Widget _buildNotificationsContent() {
+    return SingleChildScrollView(
+      child: Column(
         children: [
+          // Send Notification Card
           Container(
-            padding: const EdgeInsets.all(8),
+            padding: const EdgeInsets.all(24),
             decoration: BoxDecoration(
-              color: statusColor.withOpacity(0.1),
-              borderRadius: BorderRadius.circular(6),
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(16),
+              boxShadow: [
+                BoxShadow(color: Colors.grey.shade200, blurRadius: 8),
+              ],
             ),
-            child: Icon(
-              isIncoming ? Icons.arrow_downward : Icons.arrow_upward,
-              size: 20,
-              color: statusColor,
-            ),
-          ),
-          const SizedBox(width: 16),
-          Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  transaction['type'],
+                  'Send Notification',
                   style: GoogleFonts.workSans(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
                     color: Colors.grey.shade800,
                   ),
                 ),
+                const SizedBox(height: 20),
+                Row(
+                  children: [
+                    Expanded(
+                      child: _buildNotificationTypeCard(
+                        'Individual',
+                        'Send to specific user',
+                        Icons.person,
+                        Colors.blue,
+                        () => _showSendNotificationDialog(false),
+                      ),
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: _buildNotificationTypeCard(
+                        'Broadcast',
+                        'Send to all users',
+                        Icons.broadcast_on_personal,
+                        Colors.orange,
+                        () => _showSendNotificationDialog(true),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 24),
+
+          // Recent Notifications
+          Container(
+            padding: const EdgeInsets.all(24),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(16),
+              boxShadow: [
+                BoxShadow(color: Colors.grey.shade200, blurRadius: 8),
+              ],
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
                 Text(
-                  transaction['user'],
+                  'Recent Notifications',
                   style: GoogleFonts.workSans(
-                    fontSize: 14,
-                    color: Colors.grey.shade600,
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.grey.shade800,
                   ),
                 ),
-                Text(
-                  transaction['date'],
-                  style: GoogleFonts.workSans(
-                    fontSize: 12,
-                    color: Colors.grey.shade500,
+                const SizedBox(height: 20),
+                Center(
+                  child: Column(
+                    children: [
+                      Icon(
+                        Icons.notifications,
+                        size: 64,
+                        color: Colors.grey.shade400,
+                      ),
+                      const SizedBox(height: 16),
+                      Text(
+                        'Notification history will be shown here',
+                        style: GoogleFonts.workSans(
+                          color: Colors.grey.shade600,
+                          fontSize: 16,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ],
             ),
           ),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Text(
-                '${isIncoming ? '+' : '-'}रु ${transaction['amount'].toStringAsFixed(0)}',
-                style: GoogleFonts.workSans(
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                  color: isIncoming
-                      ? Colors.green.shade600
-                      : Colors.red.shade600,
-                ),
-              ),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                decoration: BoxDecoration(
-                  color: statusColor.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Text(
-                  transaction['status'],
-                  style: GoogleFonts.workSans(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    color: statusColor,
-                  ),
-                ),
-              ),
-            ],
-          ),
         ],
       ),
     );
   }
 
+  Widget _buildNotificationTypeCard(
+    String title,
+    String description,
+    IconData icon,
+    Color color,
+    VoidCallback onTap,
+  ) {
+    return InkWell(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          border: Border.all(color: color.withOpacity(0.3)),
+          borderRadius: BorderRadius.circular(12),
+          color: color.withOpacity(0.05),
+        ),
+        child: Column(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: color.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Icon(icon, color: color, size: 32),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              title,
+              style: GoogleFonts.workSans(
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+                color: Colors.grey.shade800,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              description,
+              style: GoogleFonts.workSans(
+                fontSize: 14,
+                color: Colors.grey.shade600,
+              ),
+              textAlign: TextAlign.center,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ---------- Settings Content ----------
   Widget _buildSettingsContent() {
     return SingleChildScrollView(
       child: Column(
         children: [
-          // Settings Categories
-          _buildSettingsSection('Loan Settings', [
-            _buildSettingItem('Maximum Loan Percentage', '98%', Icons.percent),
-            _buildSettingItem(
-              'Minimum Salary Requirement',
-              'रु 30,000',
-              Icons.attach_money,
-            ),
-            _buildSettingItem(
-              'Maximum Loan Duration',
-              '12 months',
-              Icons.schedule,
-            ),
-            _buildSettingItem('Processing Fee', '2%', Icons.receipt),
-          ]),
-          const SizedBox(height: 20),
-          _buildSettingsSection('System Settings', [
-            _buildSettingItem(
-              'Auto-approval Threshold',
-              'रु 50,000',
-              Icons.approval,
-            ),
-            _buildSettingItem(
-              'Risk Assessment Model',
-              'Advanced',
-              Icons.security,
-            ),
-            _buildSettingItem('SMS Notifications', 'Enabled', Icons.sms),
-            _buildSettingItem('Email Notifications', 'Enabled', Icons.email),
-          ]),
-          const SizedBox(height: 20),
-          _buildSettingsSection('Security Settings', [
-            _buildSettingItem(
-              'Two-Factor Authentication',
-              'Enabled',
-              Icons.security,
-            ),
-            _buildSettingItem('Session Timeout', '30 minutes', Icons.timer),
-            _buildSettingItem('Password Policy', 'Strong', Icons.lock),
-            _buildSettingItem('API Rate Limiting', 'Active', Icons.api),
-          ]),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildSettingsSection(String title, List<Widget> items) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(24),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.grey.shade200,
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            title,
-            style: GoogleFonts.workSans(
-              fontSize: 20,
-              fontWeight: FontWeight.bold,
-              color: Colors.grey.shade800,
-            ),
-          ),
-          const SizedBox(height: 20),
-          ...items,
-        ],
-      ),
-    );
-  }
-
-  Widget _buildSettingItem(String title, String value, IconData icon) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 16),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.grey.shade50,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.grey.shade200),
-      ),
-      child: Row(
-        children: [
           Container(
-            padding: const EdgeInsets.all(8),
+            padding: const EdgeInsets.all(24),
             decoration: BoxDecoration(
-              color: Colors.orange.shade100,
-              borderRadius: BorderRadius.circular(6),
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(16),
+              boxShadow: [
+                BoxShadow(color: Colors.grey.shade200, blurRadius: 8),
+              ],
             ),
-            child: Icon(icon, size: 20, color: Colors.orange.shade600),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'System Settings',
+                  style: GoogleFonts.workSans(
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.grey.shade800,
+                  ),
+                ),
+                const SizedBox(height: 20),
+                _buildSettingsItem(
+                  'Loan Configuration',
+                  'Configure loan parameters and limits',
+                  Icons.settings,
+                  () {},
+                ),
+                _buildSettingsItem(
+                  'User Roles',
+                  'Manage user roles and permissions',
+                  Icons.admin_panel_settings,
+                  () {},
+                ),
+                _buildSettingsItem(
+                  'Backup & Export',
+                  'Backup system data and export reports',
+                  Icons.backup,
+                  () {},
+                ),
+                _buildSettingsItem(
+                  'System Logs',
+                  'View system logs and activities',
+                  Icons.list_alt,
+                  () {},
+                ),
+              ],
+            ),
           ),
-          const SizedBox(width: 16),
-          Expanded(
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSettingsItem(
+    String title,
+    String description,
+    IconData icon,
+    VoidCallback onTap,
+  ) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(8),
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade100,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Icon(icon, color: Colors.grey.shade600),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        style: GoogleFonts.workSans(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.grey.shade800,
+                        ),
+                      ),
+                      Text(
+                        description,
+                        style: GoogleFonts.workSans(
+                          fontSize: 14,
+                          color: Colors.grey.shade600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Icon(Icons.chevron_right, color: Colors.grey.shade400),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ---------- Helper Methods ----------
+  String _calculateAverageLoanAmount() {
+    if (_loans.isEmpty) return '0';
+    final total = _loans.fold(0.0, (sum, loan) => sum + loan.loanableAmount);
+    return (total / _loans.length).toStringAsFixed(0);
+  }
+
+  int _calculateKYCRate() {
+    if (_kycApplications.isEmpty) return 0;
+    final verified = _kycApplications.where((kyc) => kyc.verified).length;
+    return ((verified / _kycApplications.length) * 100).round();
+  }
+
+  Color _getStatusColor(String status) {
+    switch (status.toLowerCase()) {
+      case 'approved':
+        return Colors.green;
+      case 'pending':
+        return Colors.orange;
+      case 'declined':
+        return Colors.red;
+      default:
+        return Colors.grey;
+    }
+  }
+
+  IconData _getStatusIcon(String status) {
+    switch (status.toLowerCase()) {
+      case 'approved':
+        return Icons.check_circle;
+      case 'pending':
+        return Icons.schedule;
+      case 'declined':
+        return Icons.cancel;
+      default:
+        return Icons.help;
+    }
+  }
+
+  String _formatDateTime(DateTime dateTime) {
+    return '${dateTime.year}-${dateTime.month.toString().padLeft(2, '0')}-${dateTime.day.toString().padLeft(2, '0')} ${dateTime.hour.toString().padLeft(2, '0')}:${dateTime.minute.toString().padLeft(2, '0')}';
+  }
+
+  // ---------- Navigation Methods ----------
+  void _viewLoanDetails(LoanModel loan) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => AdminLoanDetailsPage(loanId: loan.id),
+      ),
+    );
+  }
+
+  void _viewKYCDetails(KYCModel kyc) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => AdminKYCDetailsPage(userId: kyc.uid),
+      ),
+    );
+  }
+
+  void _viewUserDetails(UserModel user) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => AdminUserDetailsPage(userId: user.uid),
+      ),
+    );
+  }
+
+  // ---------- Action Methods ----------
+  void _showApprovalDialog(LoanModel loan, bool isApproval) {
+    final commentController = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(
+          isApproval ? 'Approve Loan' : 'Decline Loan',
+          style: GoogleFonts.workSans(fontWeight: FontWeight.bold),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              'रु ${loan.loanableAmount.toStringAsFixed(0)} for ${loan.durationMonths} months',
+              style: GoogleFonts.workSans(fontSize: 16),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: commentController,
+              decoration: InputDecoration(
+                labelText: 'Comment',
+                hintText: isApproval
+                    ? 'Approval reason...'
+                    : 'Decline reason...',
+                border: const OutlineInputBorder(),
+              ),
+              maxLines: 3,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text('Cancel', style: GoogleFonts.workSans()),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              if (commentController.text.trim().isEmpty) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Please enter a comment')),
+                );
+                return;
+              }
+
+              try {
+                if (isApproval) {
+                  await _adminService.approveLoan(
+                    loan.id,
+                    commentController.text.trim(),
+                  );
+                } else {
+                  await _adminService.declineLoan(
+                    loan.id,
+                    commentController.text.trim(),
+                  );
+                }
+
+                if (mounted) {
+                  Navigator.pop(context);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(
+                        'Loan ${isApproval ? 'approved' : 'declined'} successfully',
+                      ),
+                    ),
+                  );
+                }
+              } catch (e) {
+                if (mounted) {
+                  ScaffoldMessenger.of(
+                    context,
+                  ).showSnackBar(SnackBar(content: Text('Error: $e')));
+                }
+              }
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: isApproval ? Colors.green : Colors.red,
+              foregroundColor: Colors.white,
+            ),
             child: Text(
-              title,
-              style: GoogleFonts.workSans(
-                fontSize: 14,
-                fontWeight: FontWeight.w500,
-                color: Colors.grey.shade700,
+              isApproval ? 'Approve' : 'Decline',
+              style: GoogleFonts.workSans(),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showKYCApprovalDialog(KYCModel kyc, bool isApproval) {
+    final commentController = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(
+          isApproval ? 'Verify KYC' : 'Decline KYC',
+          style: GoogleFonts.workSans(fontWeight: FontWeight.bold),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              'KYC for ${kyc.fullName}',
+              style: GoogleFonts.workSans(fontSize: 16),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: commentController,
+              decoration: InputDecoration(
+                labelText: 'Comment',
+                hintText: isApproval
+                    ? 'Verification notes...'
+                    : 'Decline reason...',
+                border: const OutlineInputBorder(),
+              ),
+              maxLines: 3,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text('Cancel', style: GoogleFonts.workSans()),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              if (commentController.text.trim().isEmpty) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Please enter a comment')),
+                );
+                return;
+              }
+
+              try {
+                if (isApproval) {
+                  await _adminService.approveKYC(
+                    kyc.uid,
+                    commentController.text.trim(),
+                  );
+                } else {
+                  await _adminService.declineKYC(
+                    kyc.uid,
+                    commentController.text.trim(),
+                  );
+                }
+
+                if (mounted) {
+                  Navigator.pop(context);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(
+                        'KYC ${isApproval ? 'verified' : 'declined'} successfully',
+                      ),
+                    ),
+                  );
+                }
+              } catch (e) {
+                if (mounted) {
+                  ScaffoldMessenger.of(
+                    context,
+                  ).showSnackBar(SnackBar(content: Text('Error: $e')));
+                }
+              }
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: isApproval ? Colors.green : Colors.red,
+              foregroundColor: Colors.white,
+            ),
+            child: Text(
+              isApproval ? 'Verify' : 'Decline',
+              style: GoogleFonts.workSans(),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showSendNotificationDialog(bool isBroadcast) {
+    final titleController = TextEditingController();
+    final messageController = TextEditingController();
+    String selectedUserId = '';
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(
+          isBroadcast
+              ? 'Send Broadcast Notification'
+              : 'Send Individual Notification',
+          style: GoogleFonts.workSans(fontWeight: FontWeight.bold),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (!isBroadcast) ...[
+              DropdownButtonFormField<String>(
+                decoration: const InputDecoration(
+                  labelText: 'Select User',
+                  border: OutlineInputBorder(),
+                ),
+                items: _users
+                    .map(
+                      (user) => DropdownMenuItem(
+                        value: user.uid,
+                        child: Text('${user.displayName} (${user.email})'),
+                      ),
+                    )
+                    .toList(),
+                onChanged: (value) => selectedUserId = value ?? '',
+              ),
+              const SizedBox(height: 16),
+            ],
+            TextField(
+              controller: titleController,
+              decoration: const InputDecoration(
+                labelText: 'Title',
+                border: OutlineInputBorder(),
               ),
             ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: messageController,
+              decoration: const InputDecoration(
+                labelText: 'Message',
+                border: OutlineInputBorder(),
+              ),
+              maxLines: 3,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text('Cancel', style: GoogleFonts.workSans()),
           ),
-          Text(
-            value,
-            style: GoogleFonts.workSans(
-              fontSize: 14,
-              fontWeight: FontWeight.w600,
-              color: Colors.grey.shade800,
+          ElevatedButton(
+            onPressed: () async {
+              if (titleController.text.trim().isEmpty ||
+                  messageController.text.trim().isEmpty) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Please fill all fields')),
+                );
+                return;
+              }
+
+              if (!isBroadcast && selectedUserId.isEmpty) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Please select a user')),
+                );
+                return;
+              }
+
+              try {
+                if (isBroadcast) {
+                  await _adminService.sendBroadcastNotification(
+                    title: titleController.text.trim(),
+                    message: messageController.text.trim(),
+                    type: 'admin_broadcast',
+                  );
+                } else {
+                  await _adminService.sendNotificationToUser(
+                    userId: selectedUserId,
+                    title: titleController.text.trim(),
+                    message: messageController.text.trim(),
+                    type: 'admin_message',
+                  );
+                }
+
+                if (mounted) {
+                  Navigator.pop(context);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Notification sent successfully'),
+                    ),
+                  );
+                }
+              } catch (e) {
+                if (mounted) {
+                  ScaffoldMessenger.of(
+                    context,
+                  ).showSnackBar(SnackBar(content: Text('Error: $e')));
+                }
+              }
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.blue.shade600,
+              foregroundColor: Colors.white,
+            ),
+            child: Text('Send', style: GoogleFonts.workSans()),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showLogoutDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(
+          'Sign Out',
+          style: GoogleFonts.workSans(fontWeight: FontWeight.bold),
+        ),
+        content: Text(
+          'Are you sure you want to sign out of the admin panel?',
+          style: GoogleFonts.workSans(),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text(
+              'Cancel',
+              style: GoogleFonts.workSans(color: Colors.grey.shade600),
             ),
           ),
-          const SizedBox(width: 8),
-          Icon(Icons.arrow_forward_ios, size: 16, color: Colors.grey.shade400),
+          ElevatedButton(
+            onPressed: () async {
+              print('Sign out button pressed'); // Debug
+              Navigator.pop(context);
+
+              print('About to call signOut()'); // Debug
+              await _authService.signOut();
+              print('SignOut completed'); // Debug
+
+              if (mounted) {
+                print('Navigating to /auth'); // Debug
+                Navigator.pushReplacementNamed(context, '/auth');
+              } else {
+                print('Widget not mounted, skipping navigation'); // Debug
+              }
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red.shade600,
+              foregroundColor: Colors.white,
+            ),
+            child: Text('Sign Out', style: GoogleFonts.workSans()),
+          ),
         ],
       ),
     );

@@ -1482,7 +1482,7 @@ class _UserDashboardPageState extends State<UserDashboardPage> {
                     ),
                   ),
                   Text(
-                    'रु ${_eligibleAmount.toStringAsFixed(0)}',
+                    'रु ${((double.tryParse(_monthlySalaryController.text) ?? 0) * 0.98).toStringAsFixed(0)}',
                     style: GoogleFonts.workSans(
                       fontSize: 32,
                       fontWeight: FontWeight.bold,
