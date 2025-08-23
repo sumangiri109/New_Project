@@ -751,7 +751,7 @@ class _AdminLoginPageState extends State<AdminLoginPage> {
     if (email.toLowerCase() == 'admin@payadvance.local') {
       Navigator.pushReplacement(
         context,
-        MaterialPageRoute(builder: (_) => const AdminDashboard()),
+        MaterialPageRoute(builder: (_) => const AdminDashboardPage()),
       );
     } else {
       ScaffoldMessenger.of(

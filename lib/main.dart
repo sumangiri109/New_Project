@@ -3,6 +3,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:loan_project/presentation/screens/admin_dashboard.dart';
 import 'package:loan_project/presentation/screens/landing_page.dart';
 import 'package:loan_project/presentation/screens/testscreen.dart';
+import 'package:loan_project/presentation/screens/user_dashboard.dart';
 import 'firebase_options.dart';
 import 'presentation/screens/auth_page.dart';
 
@@ -20,6 +21,13 @@ class MyApp extends StatelessWidget {
       theme: ThemeData(primarySwatch: Colors.orange),
       home: LandingPage(),
       debugShowCheckedModeBanner: false,
+      routes: {
+        '/auth': (context) => LoginPage(), // Redirecting page
+        '/login': (context) => LoginPage(), // Login / Signup UI
+        '/home': (context) => LandingPage(), // Normal user home
+        '/admin-dashboard': (context) => AdminDashboardPage(),
+        '/user-dashboard': (context) => UserDashboardPage(), // Admin dashboard
+      },
     );
   }
 }
