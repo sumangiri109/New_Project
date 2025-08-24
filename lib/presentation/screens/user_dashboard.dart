@@ -1,7 +1,11 @@
-// lib/presentation/screens/user_dashboard_page.dart
-import 'dart:async';
-import 'dart:io';
+// lib/presentation/screens/user_dashboard.dart
+// Replace your existing file with this web-compatible version
 
+import 'dart:async';
+// DO NOT import dart:io - this causes the Platform._operatingSystem error on web
+// import 'dart:io'; // ❌ Remove this line if it exists
+
+import 'dart:typed_data'; // ✅ Add this for Uint8List
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/foundation.dart';
@@ -44,10 +48,10 @@ class _UserDashboardPageState extends State<UserDashboardPage> {
   // Duration selection
   int _selectedDurationMonths = 1;
 
-  // File upload states
-  File? _salaryProofFile;
-  File? _consentFile;
-  File? _citizenshipFile;
+  // ✅ CHANGE: Use XFile instead of File for web compatibility
+  XFile? _salaryProofFile;
+  XFile? _consentFile;
+  XFile? _citizenshipFile;
 
   // Realtime listeners
   StreamSubscription<DocumentSnapshot<Object?>>? _kycSub;
@@ -152,46 +156,152 @@ class _UserDashboardPageState extends State<UserDashboardPage> {
     return null;
   }
 
-  // Image picker
-  Future<File?> _pickImageFromGallery() async {
-    final picker = ImagePicker();
-    final x = await picker.pickImage(
-      source: ImageSource.gallery,
-      imageQuality: 80,
-    );
-    if (x == null) return null;
-    return File(x.path);
+  // ✅ FIXED: Web-compatible image picker using XFile
+  Future<XFile?> _pickImageFromGallery() async {
+    try {
+      final picker = ImagePicker();
+      final XFile? pickedFile = await picker.pickImage(
+        source: ImageSource.gallery,
+        imageQuality: 85,
+        maxWidth: 1920,
+        maxHeight: 1080,
+      );
+
+      if (pickedFile != null) {
+        // Validate file size
+        final bytes = await pickedFile.readAsBytes();
+        if (bytes.length > 5 * 1024 * 1024) {
+          throw Exception('File size must be less than 5MB');
+        }
+
+        if (kDebugMode) {
+          print('✅ File selected: ${pickedFile.name}');
+          print('✅ File size: ${bytes.length} bytes');
+        }
+      }
+
+      return pickedFile;
+    } catch (e) {
+      if (kDebugMode) print('❌ Image picker error: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Error selecting file: $e')));
+      }
+      return null;
+    }
   }
 
-  // Submit KYC
+  // ✅ FIXED: Web-compatible file upload using putData instead of putFile
+  Future<String> _uploadFileToFirebaseStorage(XFile file, String path) async {
+    try {
+      if (kDebugMode) print('📤 Starting upload to: $path');
+
+      // Read file as bytes - works on all platforms
+      final Uint8List bytes = await file.readAsBytes();
+      if (kDebugMode) print('📋 File loaded: ${bytes.length} bytes');
+
+      // Get Firebase Storage reference
+      final Reference ref = FirebaseStorage.instance.ref().child(path);
+
+      // Create metadata
+      final SettableMetadata metadata = SettableMetadata(
+        contentType: _getContentType(file.name),
+        customMetadata: {
+          'uploadedAt': DateTime.now().toIso8601String(),
+          'originalName': file.name,
+          'fileSize': bytes.length.toString(),
+        },
+      );
+
+      // ✅ Use putData() for web - NOT putFile()
+      final UploadTask uploadTask = ref.putData(bytes, metadata);
+
+      // Wait for completion
+      final TaskSnapshot snapshot = await uploadTask;
+
+      if (snapshot.state == TaskState.success) {
+        final String downloadURL = await ref.getDownloadURL();
+        if (kDebugMode) print('✅ Upload successful: $downloadURL');
+        return downloadURL;
+      } else {
+        throw Exception('Upload failed with state: ${snapshot.state}');
+      }
+    } on FirebaseException catch (e) {
+      if (kDebugMode) print('❌ Firebase error: ${e.code} - ${e.message}');
+      throw Exception('Firebase upload error: ${e.message ?? e.code}');
+    } catch (e) {
+      if (kDebugMode) print('❌ Upload error: $e');
+      throw Exception('Upload failed: $e');
+    }
+  }
+
+  // Helper method to get content type
+  String _getContentType(String fileName) {
+    final String extension = fileName.split('.').last.toLowerCase();
+    switch (extension) {
+      case 'jpg':
+      case 'jpeg':
+        return 'image/jpeg';
+      case 'png':
+        return 'image/png';
+      case 'pdf':
+        return 'application/pdf';
+      case 'webp':
+        return 'image/webp';
+      default:
+        return 'application/octet-stream';
+    }
+  }
+
+  // ✅ FIXED: KYC submission with proper web upload
   Future<void> _submitKYCToService({
     required String fullName,
     required String phone,
     required String dateOfBirth,
     required String citizenshipNumber,
-    File? citizenshipFile,
+    XFile? citizenshipFile,
   }) async {
     final user = _authService.currentUser;
-    if (user == null) return;
+    if (user == null) {
+      _showErrorMessage('Please log in again');
+      return;
+    }
+
+    // Basic validation
+    if (fullName.trim().isEmpty ||
+        phone.trim().isEmpty ||
+        dateOfBirth.trim().isEmpty ||
+        citizenshipNumber.trim().isEmpty) {
+      _showErrorMessage('Please fill all required fields');
+      return;
+    }
+
+    if (citizenshipFile == null &&
+        (_kyc?.citizenshipPhotoUrl?.isEmpty ?? true)) {
+      _showErrorMessage('Please upload citizenship photo');
+      return;
+    }
 
     setState(() => _loading = true);
+
     try {
       String photoUrl = _kyc?.citizenshipPhotoUrl ?? '';
 
       if (citizenshipFile != null) {
-        final ref = FirebaseStorage.instance.ref().child(
-          'kyc/${user.uid}/citizenship_${DateTime.now().millisecondsSinceEpoch}.jpg',
-        );
-        await ref.putFile(citizenshipFile);
-        photoUrl = await ref.getDownloadURL();
+        if (kDebugMode) print('📤 Uploading citizenship file...');
+        final fileName =
+            'citizenship_${user.uid}_${DateTime.now().millisecondsSinceEpoch}.${citizenshipFile.name.split('.').last}';
+        final path = 'kyc/${user.uid}/$fileName';
+        photoUrl = await _uploadFileToFirebaseStorage(citizenshipFile, path);
       }
 
       final kyc = KYCModel(
         uid: user.uid,
-        fullName: fullName,
-        phone: phone,
-        dateOfBirth: dateOfBirth,
-        citizenshipNumber: citizenshipNumber,
+        fullName: fullName.trim(),
+        phone: phone.trim(),
+        dateOfBirth: dateOfBirth.trim(),
+        citizenshipNumber: citizenshipNumber.trim(),
         citizenshipPhotoUrl: photoUrl,
         verified: false,
         submittedAt: DateTime.now(),
@@ -199,98 +309,142 @@ class _UserDashboardPageState extends State<UserDashboardPage> {
 
       await _dashboardService.submitKYC(kyc);
 
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('KYC submitted successfully. Pending verification.'),
-        ),
-      );
+      if (mounted) {
+        _showSuccessMessage(
+          'KYC submitted successfully! Waiting for verification.',
+        );
+        setState(() => _citizenshipFile = null);
+      }
     } catch (e) {
-      if (mounted)
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('KYC submission failed: $e')));
+      if (kDebugMode) print('❌ KYC submission error: $e');
+      if (mounted) {
+        _showErrorMessage(
+          'KYC submission failed: ${e.toString().replaceAll('Exception: ', '')}',
+        );
+      }
     } finally {
       if (mounted) setState(() => _loading = false);
     }
   }
 
-  // Apply for loan: now uploads salary proof and consent file separately
+  // ✅ FIXED: Loan application with proper web upload
   Future<void> _applyForLoanToService({
     required double monthlySalary,
     required int durationMonths,
     required String reason,
-    File? salaryProof,
-    File? consentFile,
+    XFile? salaryProof,
+    XFile? consentFile,
   }) async {
     final user = _authService.currentUser;
-    if (user == null) return;
+    if (user == null) {
+      _showErrorMessage('Please log in again');
+      return;
+    }
 
     if (_kyc == null || _kyc?.verified != true) {
-      if (mounted)
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'Complete KYC and wait for verification before applying.',
-            ),
-          ),
-        );
+      _showErrorMessage('Complete KYC verification before applying');
+      return;
+    }
+
+    // Validation
+    if (monthlySalary < 10000) {
+      _showErrorMessage('Minimum salary requirement is रु 10,000');
+      return;
+    }
+
+    if (reason.trim().length < 10) {
+      _showErrorMessage(
+        'Please provide detailed reason (minimum 10 characters)',
+      );
+      return;
+    }
+
+    if (salaryProof == null) {
+      _showErrorMessage('Salary proof document is required');
       return;
     }
 
     setState(() => _loading = true);
+
     try {
       String proofUrl = '';
       String consentUrl = '';
 
-      // Upload salary proof
-      if (salaryProof != null) {
-        final ref = FirebaseStorage.instance.ref().child(
-          'loans/${user.uid}/salary_${DateTime.now().millisecondsSinceEpoch}.jpg',
-        );
-        await ref.putFile(salaryProof);
-        proofUrl = await ref.getDownloadURL();
-      }
+      // Upload salary proof (required)
+      if (kDebugMode) print('📤 Uploading salary proof...');
+      final proofFileName =
+          'salary_${user.uid}_${DateTime.now().millisecondsSinceEpoch}.${salaryProof.name.split('.').last}';
+      final proofPath = 'loans/${user.uid}/$proofFileName';
+      proofUrl = await _uploadFileToFirebaseStorage(salaryProof, proofPath);
 
-      // Upload consent file
+      // Upload consent file (optional)
       if (consentFile != null) {
-        final ref = FirebaseStorage.instance.ref().child(
-          'loans/${user.uid}/consent_${DateTime.now().millisecondsSinceEpoch}.jpg',
+        if (kDebugMode) print('📤 Uploading consent file...');
+        final consentFileName =
+            'consent_${user.uid}_${DateTime.now().millisecondsSinceEpoch}.${consentFile.name.split('.').last}';
+        final consentPath = 'loans/${user.uid}/$consentFileName';
+        consentUrl = await _uploadFileToFirebaseStorage(
+          consentFile,
+          consentPath,
         );
-        await ref.putFile(consentFile);
-        consentUrl = await ref.getDownloadURL();
       }
 
-      // Apply for loan with separate URLs
+      // Submit loan application
       await _dashboardService.applyForLoan(
         monthlySalary: monthlySalary,
         durationMonths: durationMonths,
-        reason: reason,
+        reason: reason.trim(),
         salaryProofUrl: proofUrl,
         consentUrl: consentUrl,
       );
 
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Loan application submitted successfully'),
-        ),
-      );
-
-      // Clear form and files
-      _monthlySalaryController.clear();
-      _loanPurposeController.clear();
-      _selectedDurationMonths = 1;
-      _salaryProofFile = null;
-      _consentFile = null;
-      setState(() {});
+      if (mounted) {
+        _showSuccessMessage('Loan application submitted successfully!');
+        // Clear form
+        _monthlySalaryController.clear();
+        _loanPurposeController.clear();
+        _selectedDurationMonths = 1;
+        setState(() {
+          _salaryProofFile = null;
+          _consentFile = null;
+        });
+      }
     } catch (e) {
-      if (mounted)
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Loan application failed: $e')));
+      if (kDebugMode) print('❌ Loan application error: $e');
+      if (mounted) {
+        _showErrorMessage(
+          'Loan application failed: ${e.toString().replaceAll('Exception: ', '')}',
+        );
+      }
     } finally {
       if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  // Helper methods for showing messages
+  void _showErrorMessage(String message) {
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(message),
+          backgroundColor: Colors.red,
+          duration: const Duration(seconds: 4),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
+  }
+
+  void _showSuccessMessage(String message) {
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(message),
+          backgroundColor: Colors.green,
+          duration: const Duration(seconds: 3),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
     }
   }
 
@@ -1738,7 +1892,7 @@ class _UserDashboardPageState extends State<UserDashboardPage> {
     required String title,
     required String description,
     required IconData icon,
-    required File? file,
+    required XFile? file,
     required VoidCallback onUpload,
     required VoidCallback onRemove,
     required bool isRequired,
@@ -2878,5 +3032,3 @@ class _UserDashboardPageState extends State<UserDashboardPage> {
     );
   }
 }
-
-//logic
