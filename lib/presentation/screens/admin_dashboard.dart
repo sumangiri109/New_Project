@@ -56,23 +56,29 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   Future<void> _checkAdminAndLoadData() async {
     setState(() => _loading = true);
 
-    final isAdmin = await _adminService.isAdmin();
-    if (isAdmin) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Access denied. Admin privileges required.'),
-          ),
-        );
-        Navigator.pushReplacementNamed(context, '/user-dashboard');
+    try {
+      final isAdmin = await _adminService.isAdmin();
+      if (!isAdmin) {
+        // Fixed: Changed from isAdmin to !isAdmin
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Access denied. Admin privileges required.'),
+            ),
+          );
+          Navigator.pushReplacementNamed(context, '/user-dashboard');
+        }
+        return;
       }
-      return;
+
+      await _loadDashboardData();
+      _setupStreamListeners();
+
+      setState(() => _loading = false);
+    } catch (e) {
+      if (kDebugMode) print('Error in admin check: $e');
+      setState(() => _loading = false);
     }
-
-    await _loadDashboardData();
-    _setupStreamListeners();
-
-    setState(() => _loading = false);
   }
 
   Future<void> _loadDashboardData() async {
@@ -80,12 +86,32 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       final stats = await _adminService.getDashboardStats();
       final activities = await _adminService.getRecentActivities();
 
-      setState(() {
-        _dashboardStats = stats;
-        _recentActivities = activities;
-      });
+      if (mounted) {
+        setState(() {
+          _dashboardStats = stats;
+          _recentActivities = activities;
+        });
+      }
     } catch (e) {
       if (kDebugMode) print('Error loading dashboard data: $e');
+      // Set default values if loading fails
+      if (mounted) {
+        setState(() {
+          _dashboardStats = {
+            'totalUsers': 0,
+            'totalLoans': 0,
+            'activeLoans': 0,
+            'pendingLoans': 0,
+            'totalLoanAmount': 0.0,
+            'totalKYC': 0,
+            'verifiedKYC': 0,
+            'pendingKYC': 0,
+            'newUsersThisMonth': 0,
+            'newLoansThisWeek': 0,
+          };
+          _recentActivities = [];
+        });
+      }
     }
   }
 
@@ -95,13 +121,16 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       snapshot,
     ) {
       if (mounted) {
+        final loans = snapshot.docs
+            .map((doc) => LoanModel.fromMap(doc.data() as Map<String, dynamic>))
+            .toList();
+
         setState(() {
-          _loans = snapshot.docs
-              .map(
-                (doc) => LoanModel.fromMap(doc.data() as Map<String, dynamic>),
-              )
-              .toList();
+          _loans = loans;
         });
+
+        // Update dashboard stats with real-time data
+        _updateDashboardStatsFromStreams();
       }
     });
 
@@ -110,34 +139,100 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       snapshot,
     ) {
       if (mounted) {
+        final kycApps = snapshot.docs
+            .map((doc) => KYCModel.fromMap(doc.data() as Map<String, dynamic>))
+            .toList();
+
         setState(() {
-          _kycApplications = snapshot.docs
-              .map(
-                (doc) => KYCModel.fromMap(doc.data() as Map<String, dynamic>),
-              )
-              .toList();
+          _kycApplications = kycApps;
         });
+
+        // Update dashboard stats with real-time data
+        _updateDashboardStatsFromStreams();
       }
     });
 
     // Users stream
     _usersSubscription = _adminService.getUsersStream().listen((snapshot) {
       if (mounted) {
+        final users = snapshot.docs
+            .map((doc) => UserModel.fromMap(doc.data() as Map<String, dynamic>))
+            .toList();
+
         setState(() {
-          _users = snapshot.docs
-              .map(
-                (doc) => UserModel.fromMap(doc.data() as Map<String, dynamic>),
-              )
-              .toList();
+          _users = users;
         });
+
+        // Update dashboard stats with real-time data
+        _updateDashboardStatsFromStreams();
       }
+    });
+  }
+
+  void _updateDashboardStatsFromStreams() {
+    final pendingLoans = _loans
+        .where((loan) => loan.status == 'pending')
+        .length;
+    final approvedLoans = _loans
+        .where((loan) => loan.status == 'approved')
+        .length;
+    final totalLoanAmount = _loans
+        .where((loan) => loan.status == 'approved')
+        .fold(0.0, (sum, loan) => sum + loan.loanableAmount);
+
+    final pendingKYC = _kycApplications.where((kyc) => !kyc.verified).length;
+    final verifiedKYC = _kycApplications.where((kyc) => kyc.verified).length;
+
+    // Calculate new users this month
+    final now = DateTime.now();
+    final startOfMonth = DateTime(now.year, now.month, 1);
+    final newUsersThisMonth = _users
+        .where(
+          (user) =>
+              user.createdAt != null && user.createdAt!.isAfter(startOfMonth),
+        )
+        .length;
+
+    // Calculate new loans this week
+    final startOfWeek = now.subtract(Duration(days: now.weekday - 1));
+    final newLoansThisWeek = _loans
+        .where(
+          (loan) =>
+              loan.createdAt != null && loan.createdAt!.isAfter(startOfWeek),
+        )
+        .length;
+
+    setState(() {
+      _dashboardStats = {
+        'totalUsers': _users.length,
+        'totalLoans': _loans.length,
+        'activeLoans': approvedLoans,
+        'pendingLoans': pendingLoans,
+        'totalLoanAmount': totalLoanAmount,
+        'totalKYC': _kycApplications.length,
+        'verifiedKYC': verifiedKYC,
+        'pendingKYC': pendingKYC,
+        'newUsersThisMonth': newUsersThisMonth,
+        'newLoansThisWeek': newLoansThisWeek,
+      };
     });
   }
 
   @override
   Widget build(BuildContext context) {
     if (_loading) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+      return const Scaffold(
+        body: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              CircularProgressIndicator(),
+              SizedBox(height: 16),
+              Text('Loading admin dashboard...'),
+            ],
+          ),
+        ),
+      );
     }
 
     return Scaffold(
@@ -214,7 +309,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                     0,
                     Icons.dashboard,
                     'Dashboard',
-                    _dashboardStats['pendingLoans'] ?? 0,
+                    (_dashboardStats['pendingLoans'] ?? 0) +
+                        (_dashboardStats['pendingKYC'] ?? 0),
                   ),
                   _buildNavItem(
                     1,
@@ -391,7 +487,9 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                     Icons.notifications_outlined,
                     color: Colors.grey.shade600,
                   ),
-                  if ((_dashboardStats['pendingLoans'] ?? 0) > 0)
+                  if (((_dashboardStats['pendingLoans'] ?? 0) +
+                          (_dashboardStats['pendingKYC'] ?? 0)) >
+                      0)
                     Positioned(
                       right: 0,
                       top: 0,
@@ -497,7 +595,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
               Expanded(
                 child: _buildStatCard(
                   'Total Users',
-                  _dashboardStats['totalUsers']?.toString() ?? '0',
+                  (_dashboardStats['totalUsers'] ?? 0).toString(),
                   Icons.people,
                   Colors.blue,
                   '+${_dashboardStats['newUsersThisMonth'] ?? 0} this month',
@@ -507,7 +605,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
               Expanded(
                 child: _buildStatCard(
                   'Total Loans',
-                  _dashboardStats['totalLoans']?.toString() ?? '0',
+                  (_dashboardStats['totalLoans'] ?? 0).toString(),
                   Icons.credit_card,
                   Colors.green,
                   '+${_dashboardStats['newLoansThisWeek'] ?? 0} this week',
@@ -517,7 +615,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
               Expanded(
                 child: _buildStatCard(
                   'Active Loans',
-                  _dashboardStats['activeLoans']?.toString() ?? '0',
+                  (_dashboardStats['activeLoans'] ?? 0).toString(),
                   Icons.trending_up,
                   Colors.orange,
                   'Currently active',
@@ -527,9 +625,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
               Expanded(
                 child: _buildStatCard(
                   'Pending Approvals',
-                  (_dashboardStats['pendingLoans'] ??
-                          0 + _dashboardStats['pendingKYC'] ??
-                          0)
+                  ((_dashboardStats['pendingLoans'] ?? 0) +
+                          (_dashboardStats['pendingKYC'] ?? 0))
                       .toString(),
                   Icons.pending,
                   Colors.red,
@@ -556,7 +653,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
               Expanded(
                 child: _buildStatCard(
                   'Verified KYC',
-                  _dashboardStats['verifiedKYC']?.toString() ?? '0',
+                  (_dashboardStats['verifiedKYC'] ?? 0).toString(),
                   Icons.verified_user,
                   Colors.teal,
                   '${_dashboardStats['pendingKYC'] ?? 0} pending',
@@ -566,7 +663,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
               Expanded(
                 child: _buildStatCard(
                   'Pending Loans',
-                  _dashboardStats['pendingLoans']?.toString() ?? '0',
+                  (_dashboardStats['pendingLoans'] ?? 0).toString(),
                   Icons.schedule,
                   Colors.amber,
                   'Awaiting review',

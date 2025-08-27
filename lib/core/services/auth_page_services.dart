@@ -17,24 +17,26 @@ class AuthPageServices {
     final docRef = _db.collection("users").doc(user.uid);
     final docSnapshot = await docRef.get();
 
-    final userData = {
-      "uid": user.uid,
-      "email": user.email ?? "",
-      "displayName": displayName ?? user.displayName ?? "",
-      "photoUrl": user.photoURL ?? "",
-      "role": "user", // default role
-      "lastOnline": FieldValue.serverTimestamp(),
-    };
-
     if (docSnapshot.exists) {
-      // Merge profile update
+      // Merge profile update, but DO NOT overwrite role
+      final userData = {
+        "displayName": displayName ?? user.displayName ?? "",
+        "photoUrl": user.photoURL ?? "",
+        "lastOnline": FieldValue.serverTimestamp(),
+      };
       await docRef.set(userData, SetOptions(merge: true));
     } else {
-      // First signup → also set createdAt
-      await docRef.set({
-        ...userData,
+      // First signup → set default role
+      final userData = {
+        "uid": user.uid,
+        "email": user.email ?? "",
+        "displayName": displayName ?? user.displayName ?? "",
+        "photoUrl": user.photoURL ?? "",
+        "role": "user", // default role for new users
+        "lastOnline": FieldValue.serverTimestamp(),
         "createdAt": FieldValue.serverTimestamp(),
-      }, SetOptions(merge: true));
+      };
+      await docRef.set(userData, SetOptions(merge: true));
     }
   }
 

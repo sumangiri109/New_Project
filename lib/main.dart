@@ -19,7 +19,7 @@ class MyApp extends StatelessWidget {
     return MaterialApp(
       title: 'PayAdvance - Loan Project',
       theme: ThemeData(primarySwatch: Colors.orange),
-      home: LandingPage(),
+      home: LoginPage(),
       debugShowCheckedModeBanner: false,
       routes: {
         '/auth': (context) => LoginPage(), // Redirecting page
