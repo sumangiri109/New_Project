@@ -2,12 +2,12 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:loan_project/core/services/auth_page_services.dart';
+import 'package:loan_project/core/services/admin_dashboard_services.dart';
 import 'package:loan_project/presentation/screens/admin_dashboard.dart';
 import 'package:loan_project/presentation/screens/user_dashboard.dart';
-import 'package:loan_project/core/services/user_dashboard_services.dart';
 
 /// =====================
-/// Auth UI (Login / Register / Admin Login)
+/// Auth UI (Login / Admin Login)
 /// =====================
 
 class AppColors {
@@ -141,31 +141,27 @@ class AuthScaffold extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final wide = constraints.maxWidth >= 900;
-        if (wide) {
-          return Row(
-            children: [
-              Expanded(flex: 5, child: form),
-              Expanded(flex: 4, child: infoPanel),
-            ],
-          );
-        } else {
-          return SingleChildScrollView(
-            child: Column(
-              children: [
-                SizedBox(height: 260, child: infoPanel),
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                  child: form,
-                ),
-              ],
+    final wide = MediaQuery.of(context).size.width >= 900;
+    if (wide) {
+      return Row(
+        children: [
+          Expanded(flex: 5, child: form),
+          Expanded(flex: 4, child: infoPanel),
+        ],
+      );
+    } else {
+      return SingleChildScrollView(
+        child: Column(
+          children: [
+            SizedBox(height: 260, child: infoPanel),
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              child: form,
             ),
-          );
-        }
-      },
-    );
+          ],
+        ),
+      );
+    }
   }
 }
 
@@ -186,6 +182,7 @@ class _LoginPageState extends State<LoginPage> {
   bool _obscurePassword = true;
 
   final _authService = AuthPageServices();
+  final _adminService = AdminDashboardServices();
 
   @override
   void dispose() {
@@ -204,26 +201,27 @@ class _LoginPageState extends State<LoginPage> {
     );
 
     if (!mounted) return;
-
-    setState(() => _isLoading = false);
-
     if (result.success) {
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(builder: (_) => const UserDashboardPage()),
-      );
+      // check role
+      final bool admin = await _adminService.isAdmin();
+      if (!mounted) return;
+      if (admin) {
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (_) => const AdminDashboardPage()),
+        );
+      } else {
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (_) => const UserDashboardPage()),
+        );
+      }
     } else {
+      setState(() => _isLoading = false);
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text(result.error ?? 'Login failed')));
     }
-  }
-
-  void _goToRegister() {
-    Navigator.push(
-      context,
-      MaterialPageRoute(builder: (_) => const RegisterPage()),
-    );
   }
 
   void _goToAdminLogin() {
@@ -351,15 +349,27 @@ class _LoginPageState extends State<LoginPage> {
                         setState(() => _isLoading = true);
                         final result = await _authService.signInWithGoogle();
                         if (!mounted) return;
-                        setState(() => _isLoading = false);
+
                         if (result.success) {
-                          Navigator.pushReplacement(
-                            context,
-                            MaterialPageRoute(
-                              builder: (_) => const UserDashboardPage(),
-                            ),
-                          );
+                          final bool admin = await _adminService.isAdmin();
+                          if (!mounted) return;
+                          if (admin) {
+                            Navigator.pushReplacement(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => const AdminDashboardPage(),
+                              ),
+                            );
+                          } else {
+                            Navigator.pushReplacement(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => const UserDashboardPage(),
+                              ),
+                            );
+                          }
                         } else {
+                          setState(() => _isLoading = false);
                           ScaffoldMessenger.of(context).showSnackBar(
                             SnackBar(
                               content: Text(
@@ -371,28 +381,6 @@ class _LoginPageState extends State<LoginPage> {
                       },
                     ),
                     const SizedBox(height: 24),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Text(
-                          'Don\'t have an account? ',
-                          style: GoogleFonts.workSans(
-                            color: Colors.grey.shade600,
-                          ),
-                        ),
-                        GestureDetector(
-                          onTap: _goToRegister,
-                          child: Text(
-                            'Sign Up',
-                            style: GoogleFonts.workSans(
-                              color: AppColors.primary,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
                     GestureDetector(
                       onTap: _goToAdminLogin,
                       child: Center(
@@ -424,294 +412,6 @@ class _LoginPageState extends State<LoginPage> {
           subtitle: 'Sign in to continue using PayAdvance',
         ),
       ),
-    );
-  }
-}
-
-/// ===================== REGISTER PAGE =====================
-class RegisterPage extends StatefulWidget {
-  const RegisterPage({super.key});
-
-  @override
-  State<RegisterPage> createState() => _RegisterPageState();
-}
-
-class _RegisterPageState extends State<RegisterPage> {
-  final _formKey = GlobalKey<FormState>();
-  final _nameController = TextEditingController();
-  final _emailController = TextEditingController();
-  final _passwordController = TextEditingController();
-  final _confirmController = TextEditingController();
-  bool _isLoading = false;
-  bool _obscurePassword = true;
-  bool _obscureConfirm = true;
-  bool _acceptTerms = false;
-
-  final _authService = AuthPageServices();
-
-  @override
-  void dispose() {
-    _nameController.dispose();
-    _emailController.dispose();
-    _passwordController.dispose();
-    _confirmController.dispose();
-    super.dispose();
-  }
-
-  Future<void> _submitRegister() async {
-    if (!_formKey.currentState!.validate()) return;
-    if (!_acceptTerms) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please accept Terms of Service')),
-      );
-      return;
-    }
-
-    setState(() => _isLoading = true);
-
-    final result = await _authService.registerWithEmailAndPassword(
-      email: _emailController.text.trim(),
-      password: _passwordController.text.trim(),
-      displayName: _nameController.text.trim(),
-    );
-
-    if (!mounted) return;
-    setState(() => _isLoading = false);
-
-    if (result.success) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Account created successfully! Please sign in.'),
-          backgroundColor: Colors.green,
-        ),
-      );
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(builder: (_) => const LoginPage()),
-      );
-    } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(result.error ?? 'Registration failed')),
-      );
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final leftPanel = authRightPanel(
-      icon: Icons.person_add,
-      title: 'Join PayAdvance Today',
-      subtitle:
-          'Create your account and start accessing your salary in advance.',
-    );
-
-    final form = Center(
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 20),
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 420),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Create Account',
-                style: GoogleFonts.workSans(
-                  fontSize: 32,
-                  fontWeight: FontWeight.bold,
-                  color: AppColors.primary,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'Fill in your information to get started.',
-                style: GoogleFonts.workSans(
-                  fontSize: 16,
-                  color: Colors.grey.shade600,
-                ),
-              ),
-              const SizedBox(height: 28),
-              Form(
-                key: _formKey,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Full Name',
-                      style: GoogleFonts.workSans(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                        color: Colors.grey.shade700,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    TextFormField(
-                      controller: _nameController,
-                      decoration: customInputDecoration(
-                        hint: 'Enter your full name',
-                        icon: Icons.person_outlined,
-                      ),
-                      validator: (v) => v == null || v.trim().isEmpty
-                          ? 'Please enter your full name'
-                          : null,
-                    ),
-                    const SizedBox(height: 16),
-                    Text(
-                      'Email Address',
-                      style: GoogleFonts.workSans(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                        color: Colors.grey.shade700,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    TextFormField(
-                      controller: _emailController,
-                      keyboardType: TextInputType.emailAddress,
-                      decoration: customInputDecoration(
-                        hint: 'Enter your email',
-                        icon: Icons.email_outlined,
-                      ),
-                      validator: emailValidator,
-                    ),
-                    const SizedBox(height: 16),
-                    Text(
-                      'Password',
-                      style: GoogleFonts.workSans(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                        color: Colors.grey.shade700,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    TextFormField(
-                      controller: _passwordController,
-                      obscureText: _obscurePassword,
-                      decoration: customInputDecoration(
-                        hint: 'Create a password',
-                        icon: Icons.lock_outlined,
-                        suffixIcon: IconButton(
-                          icon: Icon(
-                            _obscurePassword
-                                ? Icons.visibility_off
-                                : Icons.visibility,
-                          ),
-                          onPressed: () => setState(
-                            () => _obscurePassword = !_obscurePassword,
-                          ),
-                        ),
-                      ),
-                      validator: (v) => passwordValidator(v, minLen: 8),
-                    ),
-                    const SizedBox(height: 16),
-                    Text(
-                      'Confirm Password',
-                      style: GoogleFonts.workSans(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                        color: Colors.grey.shade700,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    TextFormField(
-                      controller: _confirmController,
-                      obscureText: _obscureConfirm,
-                      decoration: customInputDecoration(
-                        hint: 'Confirm your password',
-                        icon: Icons.lock_outlined,
-                        suffixIcon: IconButton(
-                          icon: Icon(
-                            _obscureConfirm
-                                ? Icons.visibility_off
-                                : Icons.visibility,
-                          ),
-                          onPressed: () => setState(
-                            () => _obscureConfirm = !_obscureConfirm,
-                          ),
-                        ),
-                      ),
-                      validator: (v) {
-                        if (v == null || v.isEmpty)
-                          return 'Please confirm your password';
-                        if (v != _passwordController.text)
-                          return 'Passwords do not match';
-                        return null;
-                      },
-                    ),
-                    const SizedBox(height: 16),
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Checkbox(
-                          value: _acceptTerms,
-                          onChanged: (val) =>
-                              setState(() => _acceptTerms = val ?? false),
-                          activeColor: AppColors.primary,
-                        ),
-                        Expanded(
-                          child: GestureDetector(
-                            onTap: () =>
-                                setState(() => _acceptTerms = !_acceptTerms),
-                            child: Text(
-                              'I agree to the Terms of Service and Privacy Policy',
-                              style: GoogleFonts.workSans(
-                                fontSize: 14,
-                                color: Colors.grey.shade700,
-                                height: 1.4,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 20),
-                    primaryButton(
-                      text: 'Create Account',
-                      onPressed: _isLoading || !_acceptTerms
-                          ? null
-                          : _submitRegister,
-                      loading: _isLoading,
-                    ),
-                    const SizedBox(height: 20),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Text(
-                          "Already have an account? ",
-                          style: GoogleFonts.workSans(
-                            fontSize: 14,
-                            color: Colors.grey.shade600,
-                          ),
-                        ),
-                        GestureDetector(
-                          onTap: () => Navigator.pushReplacement(
-                            context,
-                            MaterialPageRoute(
-                              builder: (_) => const LoginPage(),
-                            ),
-                          ),
-                          child: Text(
-                            'Sign In',
-                            style: GoogleFonts.workSans(
-                              fontSize: 14,
-                              color: AppColors.primary,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-
-    return Scaffold(
-      backgroundColor: Colors.white,
-      body: AuthScaffold(form: form, infoPanel: leftPanel),
     );
   }
 }
