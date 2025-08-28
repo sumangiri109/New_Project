@@ -2,10 +2,8 @@
 // Replace your existing file with this web-compatible version
 
 import 'dart:async';
-// DO NOT import dart:io - this causes the Platform._operatingSystem error on web
-// import 'dart:io'; // ❌ Remove this line if it exists
 
-import 'dart:typed_data'; // ✅ Add this for Uint8List
+import 'dart:typed_data'; //  Add this for Uint8List
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/foundation.dart';
