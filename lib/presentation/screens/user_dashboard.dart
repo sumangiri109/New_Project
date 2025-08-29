@@ -16,6 +16,7 @@ import 'package:loan_project/core/models/loan_model.dart';
 import 'package:loan_project/core/models/user_model.dart';
 import 'package:loan_project/core/services/auth_page_services.dart';
 import 'package:loan_project/core/services/user_dashboard_services.dart';
+import 'package:loan_project/core/models/notification_model.dart';
 
 class UserDashboardPage extends StatefulWidget {
   const UserDashboardPage({super.key});
@@ -137,21 +138,219 @@ class _UserDashboardPageState extends State<UserDashboardPage> {
       ? _profile!.displayName[0]
       : (_profile?.email.isNotEmpty == true ? _profile!.email[0] : 'U');
 
-  double? get _monthlySalaryFromLoans =>
-      _loans.isNotEmpty ? _loans.first.monthlySalary : null;
-  double get _eligibleAmount => (_monthlySalaryFromLoans != null)
-      ? (_monthlySalaryFromLoans! * 0.98)
-      : 0.0;
+  double? get _monthlySalaryFromLoans {
+    final activeLoan = _activeLoan;
+    return activeLoan?.monthlySalary;
+    
+  }
+
+  double get _eligibleAmount {
+    final monthlySalary = _monthlySalaryFromLoans;
+    if (monthlySalary == null) return 0.0;
+
+    // Calculate base eligible amount (98% of salary)
+    final baseEligible = monthlySalary * 0.98;
+
+    // Subtract current active loan amount if any
+    final activeLoan = _activeLoan;
+    if (activeLoan != null &&
+        (activeLoan.status.toLowerCase() == 'approved' ||
+            activeLoan.status.toLowerCase() == 'active')) {
+      return (baseEligible - activeLoan.loanableAmount).clamp(
+        0.0,
+        baseEligible,
+      );
+    }
+
+    return baseEligible;
+  }
+
   LoanModel? get _activeLoan {
+    // Prioritize approved loans first, then other active statuses
+    LoanModel? approvedLoan;
+    LoanModel? otherActiveLoan;
+
     for (final l in _loans) {
       final s = l.status.toLowerCase();
-      if (s == 'active' ||
-          s == 'pending' ||
-          s == 'ongoing' ||
-          s == 'in-progress')
-        return l;
+      if (s == 'approved') {
+        approvedLoan = l;
+        break; // Prioritize approved loans
+      } else if (s == 'active' || s == 'ongoing' || s == 'in-progress') {
+        otherActiveLoan ??= l; // Get first active loan
+      }
     }
-    return null;
+
+    return approvedLoan ?? otherActiveLoan;
+  }
+
+  double _calculateLoanProgress() {
+    final activeLoan = _activeLoan;
+    if (activeLoan?.createdAt == null) return 0.0;
+
+    final startDate = activeLoan!.createdAt!;
+    final totalDurationDays =
+        activeLoan.durationMonths * 30; // Approximate days per month
+    final daysPassed = DateTime.now().difference(startDate).inDays;
+
+    final progress = (daysPassed / totalDurationDays).clamp(0.0, 1.0);
+    return progress;
+  }
+
+  int _calculateRemainingMonths() {
+    final activeLoan = _activeLoan;
+    if (activeLoan?.createdAt == null) return 0;
+
+    final startDate = activeLoan!.createdAt!;
+    final totalMonths = activeLoan.durationMonths;
+    final monthsPassed = DateTime.now().difference(startDate).inDays ~/ 30;
+
+    final remaining = (totalMonths - monthsPassed).clamp(0, totalMonths);
+    return remaining;
+  }
+
+  int _calculateCompletedMonths() {
+    final activeLoan = _activeLoan;
+    if (activeLoan?.createdAt == null) return 0;
+
+    final startDate = activeLoan!.createdAt!;
+    final monthsPassed = DateTime.now().difference(startDate).inDays ~/ 30;
+
+    return monthsPassed.clamp(0, activeLoan.durationMonths);
+  }
+
+  DateTime? _getNextDeductionDate() {
+    final activeLoan = _activeLoan;
+    if (activeLoan?.createdAt == null) return null;
+
+    final startDate = activeLoan!.createdAt!;
+    final monthsPassed = _calculateCompletedMonths();
+
+    // Next deduction is first day of next month from loan start
+    final nextDeduction = DateTime(
+      startDate.year,
+      startDate.month + monthsPassed + 1,
+      1, // First day of month
+    );
+
+    return nextDeduction;
+  }
+
+  Color _getNotificationColor(String type) {
+    switch (type.toLowerCase()) {
+      case 'loan_approved':
+        return Colors.green;
+      case 'loan_declined':
+        return Colors.red;
+      case 'kyc_verified':
+        return Colors.blue;
+      case 'kyc_declined':
+        return Colors.red;
+      case 'reminder':
+        return Colors.orange;
+      case 'payment_due':
+        return Colors.purple;
+      default:
+        return Colors.grey;
+    }
+  }
+
+  IconData _getNotificationIcon(String type) {
+    switch (type.toLowerCase()) {
+      case 'loan_approved':
+        return Icons.check_circle;
+      case 'loan_declined':
+        return Icons.cancel;
+      case 'kyc_verified':
+        return Icons.verified_user;
+      case 'kyc_declined':
+        return Icons.error;
+      case 'reminder':
+        return Icons.schedule;
+      case 'payment_due':
+        return Icons.payment;
+      default:
+        return Icons.info;
+    }
+  }
+
+  String _getHealthText(int score) {
+    if (score >= 80) return 'Excellent';
+    if (score >= 60) return 'Good';
+    if (score >= 40) return 'Fair';
+    if (score >= 20) return 'Poor';
+    return 'Critical';
+  }
+
+  Color _getHealthColor(int score) {
+    if (score >= 80) return Colors.green.shade600;
+    if (score >= 60) return Colors.blue.shade600;
+    if (score >= 40) return Colors.orange.shade600;
+    return Colors.red.shade600;
+  }
+
+  String _getHealthAdvice(int score) {
+    if (score >= 80) {
+      return 'Excellent financial health! Keep maintaining good payment habits.';
+    } else if (score >= 60) {
+      return 'Good financial health. Continue making timely payments to improve.';
+    } else if (score >= 40) {
+      return 'Fair financial health. Consider reducing loan frequency to improve score.';
+    } else if (score >= 20) {
+      return 'Poor financial health. Focus on completing current obligations.';
+    } else {
+      return 'Critical financial health. Contact support for assistance.';
+    }
+  }
+
+  String _getTimeAgo(DateTime? dateTime) {
+    if (dateTime == null) return 'Unknown';
+
+    final now = DateTime.now();
+    final difference = now.difference(dateTime);
+
+    if (difference.inDays > 0) {
+      return '${difference.inDays} day${difference.inDays != 1 ? 's' : ''} ago';
+    } else if (difference.inHours > 0) {
+      return '${difference.inHours} hour${difference.inHours != 1 ? 's' : ''} ago';
+    } else if (difference.inMinutes > 0) {
+      return '${difference.inMinutes} minute${difference.inMinutes != 1 ? 's' : ''} ago';
+    } else {
+      return 'Just now';
+    }
+  }
+
+  int _calculateFinancialHealth() {
+    if (_loans.isEmpty) return 0;
+
+    int score = 100; // Start with perfect score
+
+    // Deduct points for declined/rejected loans
+    final rejectedCount = _loans
+        .where(
+          (l) =>
+              l.status.toLowerCase() == 'rejected' ||
+              l.status.toLowerCase() == 'declined',
+        )
+        .length;
+    score -= (rejectedCount * 15); // -15 points per rejection
+
+    // Deduct points if has too many active loans
+    final activeCount = _loans
+        .where(
+          (l) =>
+              l.status.toLowerCase() == 'approved' ||
+              l.status.toLowerCase() == 'active',
+        )
+        .length;
+    if (activeCount > 1) score -= 20; // -20 for multiple active loans
+
+    // Bonus points for completed loans
+    final completedCount = _loans
+        .where((l) => l.status.toLowerCase() == 'completed')
+        .length;
+    score += (completedCount * 5); // +5 points per completed loan
+
+    return score.clamp(0, 100);
   }
 
   // ✅ FIXED: Web-compatible image picker using XFile
@@ -801,7 +1000,7 @@ class _UserDashboardPageState extends State<UserDashboardPage> {
                 child: _buildStatCard(
                   'Remaining Months',
                   _activeLoan != null
-                      ? '${_activeLoan!.durationMonths}'
+                      ? '${_calculateRemainingMonths()}' // ← REAL REMAINING MONTHS
                       : 'N/A',
                   Icons.calendar_today,
                   Colors.purple,
@@ -891,12 +1090,70 @@ class _UserDashboardPageState extends State<UserDashboardPage> {
 
   Widget _buildLoanProgressCard() {
     final active = _activeLoan;
-    final loanAmountStr = active != null
-        ? 'रु ${active.loanableAmount.toStringAsFixed(0)}'
-        : 'N/A';
-    final nextDeduction = active != null
-        ? (active.createdAt != null ? _formatDate(active.createdAt!) : 'N/A')
-        : 'N/A';
+
+    if (active == null) {
+      return Container(
+        padding: const EdgeInsets.all(24),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.grey.shade200,
+              blurRadius: 8,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Loan Progress',
+              style: GoogleFonts.workSans(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                color: Colors.grey.shade800,
+              ),
+            ),
+            const SizedBox(height: 20),
+            Center(
+              child: Column(
+                children: [
+                  Icon(
+                    Icons.credit_card_off,
+                    size: 48,
+                    color: Colors.grey.shade400,
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    'No Active Loan',
+                    style: GoogleFonts.workSans(
+                      fontSize: 16,
+                      color: Colors.grey.shade600,
+                    ),
+                  ),
+                  Text(
+                    'Apply for a loan to track progress',
+                    style: GoogleFonts.workSans(
+                      fontSize: 14,
+                      color: Colors.grey.shade500,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    // Calculate real data
+    final loanAmount = active.loanableAmount;
+    final progress = _calculateLoanProgress();
+    final completedMonths = _calculateCompletedMonths();
+    final remainingMonths = _calculateRemainingMonths();
+    final nextDeduction = _getNextDeductionDate();
 
     return Container(
       padding: const EdgeInsets.all(24),
@@ -927,14 +1184,14 @@ class _UserDashboardPageState extends State<UserDashboardPage> {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Text(
-                'Loan Amount: $loanAmountStr',
+                'Loan Amount: रु ${loanAmount.toStringAsFixed(0)}',
                 style: GoogleFonts.workSans(
                   fontSize: 14,
                   color: Colors.grey.shade600,
                 ),
               ),
               Text(
-                'Next Deduction: $nextDeduction',
+                'Next Deduction: ${nextDeduction != null ? _formatDate(nextDeduction) : 'N/A'}',
                 style: GoogleFonts.workSans(
                   fontSize: 14,
                   color: Colors.grey.shade600,
@@ -943,6 +1200,8 @@ class _UserDashboardPageState extends State<UserDashboardPage> {
             ],
           ),
           const SizedBox(height: 16),
+
+          // ✅ REAL Progress Bar
           Container(
             height: 8,
             decoration: BoxDecoration(
@@ -950,7 +1209,7 @@ class _UserDashboardPageState extends State<UserDashboardPage> {
               borderRadius: BorderRadius.circular(4),
             ),
             child: FractionallySizedBox(
-              widthFactor: 0.5,
+              widthFactor: progress, // ← REAL PROGRESS
               alignment: Alignment.centerLeft,
               child: Container(
                 decoration: BoxDecoration(
@@ -963,24 +1222,58 @@ class _UserDashboardPageState extends State<UserDashboardPage> {
             ),
           ),
           const SizedBox(height: 12),
+
+          // ✅ REAL Timeline Text
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Text(
-                '1 month completed',
+                '$completedMonths month${completedMonths != 1 ? 's' : ''} completed',
                 style: GoogleFonts.workSans(
                   fontSize: 12,
                   color: Colors.grey.shade500,
                 ),
               ),
               Text(
-                '1 month remaining',
+                '$remainingMonths month${remainingMonths != 1 ? 's' : ''} remaining',
                 style: GoogleFonts.workSans(
                   fontSize: 12,
                   color: Colors.grey.shade500,
                 ),
               ),
             ],
+          ),
+
+          // ✅ Status Badge
+          const SizedBox(height: 16),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            decoration: BoxDecoration(
+              color: _getStatusColor(active.status).withOpacity(0.1),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(
+                color: _getStatusColor(active.status).withOpacity(0.3),
+              ),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  _getStatusIcon(active.status),
+                  size: 14,
+                  color: _getStatusColor(active.status),
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  active.status.toUpperCase(),
+                  style: GoogleFonts.workSans(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: _getStatusColor(active.status),
+                  ),
+                ),
+              ],
+            ),
           ),
         ],
       ),
@@ -1096,33 +1389,6 @@ class _UserDashboardPageState extends State<UserDashboardPage> {
   }
 
   Widget _buildNotificationsCard() {
-    final notifications = [
-      {
-        'type': 'reminder',
-        'title': 'Salary Deduction Scheduled',
-        'message': 'Your salary deduction is scheduled for Sep 1, 2025',
-        'time': '2 hours ago',
-        'icon': Icons.schedule,
-        'color': Colors.orange,
-      },
-      {
-        'type': 'tip',
-        'title': 'Financial Tip',
-        'message': 'Track your expenses to improve financial health',
-        'time': '1 day ago',
-        'icon': Icons.lightbulb_outline,
-        'color': Colors.blue,
-      },
-      {
-        'type': 'success',
-        'title': 'Loan Approved',
-        'message': 'Your loan has been approved successfully',
-        'time': '3 days ago',
-        'icon': Icons.check_circle_outline,
-        'color': Colors.green,
-      },
-    ];
-
     return Container(
       padding: const EdgeInsets.all(24),
       decoration: BoxDecoration(
@@ -1163,17 +1429,45 @@ class _UserDashboardPageState extends State<UserDashboardPage> {
             ],
           ),
           const SizedBox(height: 16),
-          ...notifications
-              .take(3)
-              .map((n) => _buildNotificationItem(n))
-              .toList(),
+
+          // ✅ REAL-TIME NOTIFICATIONS
+          StreamBuilder<QuerySnapshot>(
+            stream: FirebaseFirestore.instance
+                .collection('notifications')
+                .where('userId', isEqualTo: _authService.currentUser?.uid ?? '')
+                .orderBy('createdAt', descending: true)
+                .limit(3)
+                .snapshots(),
+            builder: (context, snapshot) {
+              if (snapshot.connectionState == ConnectionState.waiting) {
+                return const Center(child: CircularProgressIndicator());
+              }
+
+              if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+                return _buildNoNotificationsState();
+              }
+
+              final notifications = snapshot.data!.docs.map((doc) {
+                final data = doc.data() as Map<String, dynamic>;
+                return NotificationModel.fromMap(data);
+              }).toList();
+
+              return Column(
+                children: notifications.map((notification) {
+                  return _buildRealNotificationItem(notification);
+                }).toList(),
+              );
+            },
+          ),
         ],
       ),
     );
   }
 
-  Widget _buildNotificationItem(Map<String, dynamic> notification) {
-    final Color color = notification['color'] as Color;
+  Widget _buildRealNotificationItem(NotificationModel notification) {
+    final Color color = _getNotificationColor(notification.type);
+    final IconData icon = _getNotificationIcon(notification.type);
+
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(12),
@@ -1190,11 +1484,7 @@ class _UserDashboardPageState extends State<UserDashboardPage> {
               color: color.withOpacity(0.1),
               borderRadius: BorderRadius.circular(6),
             ),
-            child: Icon(
-              notification['icon'] as IconData,
-              size: 16,
-              color: color,
-            ),
+            child: Icon(icon, size: 16, color: color),
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -1202,7 +1492,7 @@ class _UserDashboardPageState extends State<UserDashboardPage> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  notification['title'] as String,
+                  notification.title,
                   style: GoogleFonts.workSans(
                     fontSize: 14,
                     fontWeight: FontWeight.w600,
@@ -1210,14 +1500,16 @@ class _UserDashboardPageState extends State<UserDashboardPage> {
                   ),
                 ),
                 Text(
-                  notification['message'] as String,
+                  notification.message,
                   style: GoogleFonts.workSans(
                     fontSize: 12,
                     color: Colors.grey.shade600,
                   ),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
                 ),
                 Text(
-                  notification['time'] as String,
+                  _getTimeAgo(notification.createdAt),
                   style: GoogleFonts.workSans(
                     fontSize: 11,
                     color: Colors.grey.shade500,
@@ -1226,12 +1518,54 @@ class _UserDashboardPageState extends State<UserDashboardPage> {
               ],
             ),
           ),
+          if (!notification.read)
+            Container(
+              width: 8,
+              height: 8,
+              decoration: BoxDecoration(
+                color: color,
+                borderRadius: BorderRadius.circular(4),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildNoNotificationsState() {
+    return Center(
+      child: Column(
+        children: [
+          Icon(
+            Icons.notifications_off_outlined,
+            size: 48,
+            color: Colors.grey.shade400,
+          ),
+          const SizedBox(height: 12),
+          Text(
+            'No notifications',
+            style: GoogleFonts.workSans(
+              fontSize: 16,
+              color: Colors.grey.shade600,
+            ),
+          ),
+          Text(
+            'You\'re all caught up!',
+            style: GoogleFonts.workSans(
+              fontSize: 14,
+              color: Colors.grey.shade500,
+            ),
+          ),
         ],
       ),
     );
   }
 
   Widget _buildFinancialHealthCard() {
+    final healthScore = _calculateFinancialHealth();
+    final healthText = _getHealthText(healthScore);
+    final healthColor = _getHealthColor(healthScore);
+
     return Container(
       padding: const EdgeInsets.all(24),
       decoration: BoxDecoration(
@@ -1265,26 +1599,24 @@ class _UserDashboardPageState extends State<UserDashboardPage> {
                   width: 120,
                   height: 120,
                   child: CircularProgressIndicator(
-                    value: 0.75,
+                    value: healthScore / 100.0, // ← REAL HEALTH SCORE
                     strokeWidth: 8,
                     backgroundColor: Colors.grey.shade200,
-                    valueColor: AlwaysStoppedAnimation<Color>(
-                      Colors.green.shade500,
-                    ),
+                    valueColor: AlwaysStoppedAnimation<Color>(healthColor),
                   ),
                 ),
                 Column(
                   children: [
                     Text(
-                      '75',
+                      '$healthScore', // ← REAL SCORE
                       style: GoogleFonts.workSans(
                         fontSize: 32,
                         fontWeight: FontWeight.bold,
-                        color: Colors.green.shade600,
+                        color: healthColor,
                       ),
                     ),
                     Text(
-                      'Good',
+                      healthText,
                       style: GoogleFonts.workSans(
                         fontSize: 14,
                         color: Colors.grey.shade600,
@@ -1297,7 +1629,7 @@ class _UserDashboardPageState extends State<UserDashboardPage> {
           ),
           const SizedBox(height: 20),
           Text(
-            'Your financial health is good! Keep tracking your expenses and maintain regular payments.',
+            _getHealthAdvice(healthScore),
             style: GoogleFonts.workSans(
               fontSize: 14,
               color: Colors.grey.shade600,
