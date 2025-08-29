@@ -53,7 +53,7 @@ class LoanModel {
       "reason": reason,
       "loanableAmount": loanableAmount,
       "status": status,
-      "createdAt": FieldValue.serverTimestamp(),
+      "createdAt": createdAt ?? FieldValue.serverTimestamp(),
     };
   }
 }
