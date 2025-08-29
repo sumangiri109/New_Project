@@ -97,23 +97,16 @@
   <!-- ✅ Flutter loader -->
   <script>
     window.addEventListener('load', function(ev) {
-      _flutter.loader.loadEntrypoint({
-        serviceWorker: {
-          serviceWorkerVersion: "{{flutter_service_worker_version}}"
-        },
-        onEntrypointLoaded: function(engineInitializer) {
-          engineInitializer.initializeEngine().then(function(appRunner) {
-            console.log("✅ Flutter app starting...");
-            document.getElementById('loading').style.display = 'none';
-            appRunner.runApp();
-          }).catch(function(error) {
-            console.error("❌ Flutter initialization error:", error);
-            document.getElementById('loading').innerHTML = 
-              '<div style="color: red;">Error loading app. Check console for details.</div>';
-          });
-        }
+  _flutter.loader.loadEntrypoint({
+    // Remove service worker configuration temporarily
+    onEntrypointLoaded: function(engineInitializer) {
+      engineInitializer.initializeEngine().then(function(appRunner) {
+        document.getElementById('loading').style.display = 'none';
+        appRunner.runApp();
       });
-    });
+    }
+  });
+});
   </script>
 </body>
 </html>

@@ -66,9 +66,6 @@ class LoanModel {
       "loanableAmount": loanableAmount,
       "status": status,
       "createdAt": createdAt ?? FieldValue.serverTimestamp(),
-      "approvedAt": approvedAt, // ← NEW FIELD IN MAP
-      "adminComment": adminComment, // ← NEW FIELD IN MAP
-      "approvedBy": approvedBy, // ← NEW FIELD IN MAP
     };
   }
 }

@@ -78,6 +78,8 @@ class _UserDashboardPageState extends State<UserDashboardPage> {
 
   Future<void> _initData() async {
     setState(() => _loading = true);
+    // Auto-complete any expired loans
+    // await _dashboardService.autoCompletExpiredLoans();
 
     final user = _authService.currentUser;
     if (user == null) {
@@ -91,7 +93,8 @@ class _UserDashboardPageState extends State<UserDashboardPage> {
     } catch (e) {
       // ignore
     }
-
+    // Auto-complete any expired loans
+    await _dashboardService.autoCompletExpiredLoans();
     final uid = user.uid;
     _kycSub = FirebaseFirestore.instance
         .collection('kyc')
@@ -127,7 +130,7 @@ class _UserDashboardPageState extends State<UserDashboardPage> {
         });
 
     // Auto-complete any expired loans
-     await _dashboardService.autoCompletExpiredLoans();
+    // await _dashboardService.autoCompletExpiredLoans();
 
     if (mounted) setState(() => _loading = false);
   }
