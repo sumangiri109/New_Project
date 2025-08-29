@@ -126,6 +126,9 @@ class _UserDashboardPageState extends State<UserDashboardPage> {
           setState(() => _loans = loansList);
         });
 
+    // Auto-complete any expired loans
+     await _dashboardService.autoCompletExpiredLoans();
+
     if (mounted) setState(() => _loading = false);
   }
 
@@ -141,7 +144,6 @@ class _UserDashboardPageState extends State<UserDashboardPage> {
   double? get _monthlySalaryFromLoans {
     final activeLoan = _activeLoan;
     return activeLoan?.monthlySalary;
-    
   }
 
   double get _eligibleAmount {
@@ -166,30 +168,32 @@ class _UserDashboardPageState extends State<UserDashboardPage> {
   }
 
   LoanModel? get _activeLoan {
-    // Prioritize approved loans first, then other active statuses
-    LoanModel? approvedLoan;
-    LoanModel? otherActiveLoan;
+    // Get all approved loans (not completed)
+    final approvedLoans = _loans.where((loan) {
+      final status = loan.status.toLowerCase();
+      return status == 'approved' && loan.approvedAt != null;
+    }).toList();
 
-    for (final l in _loans) {
-      final s = l.status.toLowerCase();
-      if (s == 'approved') {
-        approvedLoan = l;
-        break; // Prioritize approved loans
-      } else if (s == 'active' || s == 'ongoing' || s == 'in-progress') {
-        otherActiveLoan ??= l; // Get first active loan
-      }
-    }
+    if (approvedLoans.isEmpty) return null;
 
-    return approvedLoan ?? otherActiveLoan;
+    // Sort by approval date (most recent first)
+    approvedLoans.sort((a, b) {
+      final aDate = a.approvedAt ?? DateTime(0);
+      final bDate = b.approvedAt ?? DateTime(0);
+      return bDate.compareTo(aDate);
+    });
+
+    // Return most recently approved loan
+    return approvedLoans.first;
   }
 
   double _calculateLoanProgress() {
     final activeLoan = _activeLoan;
-    if (activeLoan?.createdAt == null) return 0.0;
+    if (activeLoan?.approvedAt == null)
+      return 0.0; // Use approvedAt, not createdAt
 
-    final startDate = activeLoan!.createdAt!;
-    final totalDurationDays =
-        activeLoan.durationMonths * 30; // Approximate days per month
+    final startDate = activeLoan!.approvedAt!; // Loan starts when approved
+    final totalDurationDays = activeLoan.durationMonths * 30;
     final daysPassed = DateTime.now().difference(startDate).inDays;
 
     final progress = (daysPassed / totalDurationDays).clamp(0.0, 1.0);
@@ -198,9 +202,9 @@ class _UserDashboardPageState extends State<UserDashboardPage> {
 
   int _calculateRemainingMonths() {
     final activeLoan = _activeLoan;
-    if (activeLoan?.createdAt == null) return 0;
+    if (activeLoan?.approvedAt == null) return 0; // Use approvedAt
 
-    final startDate = activeLoan!.createdAt!;
+    final startDate = activeLoan!.approvedAt!;
     final totalMonths = activeLoan.durationMonths;
     final monthsPassed = DateTime.now().difference(startDate).inDays ~/ 30;
 
@@ -210,9 +214,9 @@ class _UserDashboardPageState extends State<UserDashboardPage> {
 
   int _calculateCompletedMonths() {
     final activeLoan = _activeLoan;
-    if (activeLoan?.createdAt == null) return 0;
+    if (activeLoan?.approvedAt == null) return 0; // Use approvedAt
 
-    final startDate = activeLoan!.createdAt!;
+    final startDate = activeLoan!.approvedAt!;
     final monthsPassed = DateTime.now().difference(startDate).inDays ~/ 30;
 
     return monthsPassed.clamp(0, activeLoan.durationMonths);
@@ -220,9 +224,9 @@ class _UserDashboardPageState extends State<UserDashboardPage> {
 
   DateTime? _getNextDeductionDate() {
     final activeLoan = _activeLoan;
-    if (activeLoan?.createdAt == null) return null;
+    if (activeLoan?.approvedAt == null) return null; // Use approvedAt
 
-    final startDate = activeLoan!.createdAt!;
+    final startDate = activeLoan!.approvedAt!;
     final monthsPassed = _calculateCompletedMonths();
 
     // Next deduction is first day of next month from loan start

@@ -1,4 +1,3 @@
-
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../models/user_model.dart';
@@ -51,7 +50,9 @@ class UserDashboardServices {
         .where("userId", isEqualTo: user.uid)
         .orderBy("createdAt", descending: true)
         .snapshots()
-        .map((snap) => snap.docs.map((d) => LoanModel.fromMap(d.data())).toList());
+        .map(
+          (snap) => snap.docs.map((d) => LoanModel.fromMap(d.data())).toList(),
+        );
   }
 
   // Listen to KYC for current user
@@ -106,7 +107,52 @@ class UserDashboardServices {
         .orderBy("createdAt", descending: true)
         .limit(10)
         .snapshots()
-        .map((snap) => snap.docs.map((d) => NotificationModel.fromMap(d.data())).toList());
+        .map(
+          (snap) => snap.docs
+              .map((d) => NotificationModel.fromMap(d.data()))
+              .toList(),
+        );
+  }
+
+  // Auto-complete loans that have expired
+  Future<void> autoCompletExpiredLoans() async {
+    final user = _auth.currentUser;
+    if (user == null) return;
+
+    try {
+      // Get all approved loans for current user
+      final loansQuery = await _db
+          .collection("loans")
+          .where("userId", isEqualTo: user.uid)
+          .where("status", isEqualTo: "approved")
+          .get();
+
+      final now = DateTime.now();
+      final batch = _db.batch();
+
+      for (var doc in loansQuery.docs) {
+        final loan = LoanModel.fromMap(doc.data());
+
+        // Skip if no approval date
+        if (loan.approvedAt == null) continue;
+
+        // Calculate loan end date
+        final loanEndDate = loan.approvedAt!.add(
+          Duration(days: loan.durationMonths * 30),
+        );
+
+        // If loan period has ended, mark as completed
+        if (now.isAfter(loanEndDate)) {
+          batch.update(doc.reference, {
+            'status': 'completed',
+            'completedAt': FieldValue.serverTimestamp(),
+          });
+        }
+      }
+
+      await batch.commit();
+    } catch (e) {
+      print('Error auto-completing loans: $e');
+    }
   }
 }
-   
