@@ -52,9 +52,9 @@ class _UserDashboardPageState extends State<UserDashboardPage> {
   XFile? _consentFile;
   XFile? _citizenshipFile;
 
-  // Realtime listeners
-  StreamSubscription<DocumentSnapshot<Object?>>? _kycSub;
-  StreamSubscription<QuerySnapshot<Object?>>? _loansSub;
+  // 🔥 UPDATED: Stream subscriptions (like admin dashboard)
+  StreamSubscription<QuerySnapshot>? _loansSubscription;
+  StreamSubscription<DocumentSnapshot>? _kycSubscription;
 
   @override
   void initState() {
@@ -64,8 +64,8 @@ class _UserDashboardPageState extends State<UserDashboardPage> {
 
   @override
   void dispose() {
-    _kycSub?.cancel();
-    _loansSub?.cancel();
+    _loansSubscription?.cancel();
+    _kycSubscription?.cancel();
     _monthlySalaryController.dispose();
     _loanPurposeController.dispose();
     _fullNameController.dispose();
@@ -76,10 +76,9 @@ class _UserDashboardPageState extends State<UserDashboardPage> {
     super.dispose();
   }
 
-  Future<void> _initData() async {
+  // 🔥 UPDATED: Following admin dashboard pattern
+  Future<void> _initData({bool refresh = false}) async {
     setState(() => _loading = true);
-    // Auto-complete any expired loans
-    // await _dashboardService.autoCompletExpiredLoans();
 
     final user = _authService.currentUser;
     if (user == null) {
@@ -91,48 +90,151 @@ class _UserDashboardPageState extends State<UserDashboardPage> {
       final profile = await _dashboardService.getUserProfile();
       if (mounted) setState(() => _profile = profile);
     } catch (e) {
-      // ignore
+      print('Profile fetch error: $e');
     }
-    // Auto-complete any expired loans
-    await _dashboardService.autoCompletExpiredLoans();
-    final uid = user.uid;
-    _kycSub = FirebaseFirestore.instance
-        .collection('kyc')
-        .doc(uid)
-        .snapshots()
-        .listen((snap) {
-          if (!mounted) return;
-          if (snap.exists && snap.data() != null) {
-            try {
-              setState(
-                () => _kyc = KYCModel.fromMap(
-                  snap.data() as Map<String, dynamic>,
-                ),
-              );
-            } catch (_) {}
-          } else {
-            setState(() => _kyc = null);
-          }
-        });
 
-    _loansSub = FirebaseFirestore.instance
+    await _dashboardService.autoCompletExpiredLoans();
+
+    // Setup streams only once (like admin dashboard)
+    if (!refresh) {
+      _setupStreamListeners();
+    } else {
+      // For refresh, just fetch data once
+      await _manualRefresh();
+    }
+
+    if (mounted) setState(() => _loading = false);
+  }
+
+  // 🔥 NEW: Follow admin dashboard pattern exactly
+  void _setupStreamListeners() {
+    final user = _authService.currentUser;
+    if (user == null) return;
+
+    final uid = user.uid;
+    print('Setting up stream listeners for user: $uid');
+
+    // Cancel existing subscriptions
+    _loansSubscription?.cancel();
+    _kycSubscription?.cancel();
+
+    // 🔥 Loans stream (exactly like admin dashboard)
+    _loansSubscription = FirebaseFirestore.instance
         .collection('loans')
         .where('userId', isEqualTo: uid)
         .orderBy('createdAt', descending: true)
         .snapshots()
-        .listen((qSnap) {
-          if (!mounted) return;
-          final loansList = qSnap.docs.map((d) {
-            final map = d.data() as Map<String, dynamic>;
-            return LoanModel.fromMap(map);
-          }).toList();
-          setState(() => _loans = loansList);
-        });
+        .listen(
+          (snapshot) {
+            print(
+              '📨 Loans stream update received: ${snapshot.docs.length} documents',
+            );
 
-    // Auto-complete any expired loans
-    // await _dashboardService.autoCompletExpiredLoans();
+            if (mounted) {
+              final loans = snapshot.docs
+                  .map(
+                    (doc) =>
+                        LoanModel.fromMap(doc.data() as Map<String, dynamic>),
+                  )
+                  .toList();
 
-    if (mounted) setState(() => _loading = false);
+              // Log each loan for debugging
+              for (var loan in loans) {
+                print(
+                  '  📋 Loan ${loan.id}: status=${loan.status}, created=${loan.createdAt}',
+                );
+              }
+
+              setState(() {
+                _loans = loans;
+              });
+
+              print('✅ Loans state updated: ${_loans.length} loans');
+            }
+          },
+          onError: (error) {
+            print('❌ Loans stream error: $error');
+          },
+        );
+
+    // 🔥 KYC stream (exactly like admin dashboard)
+    _kycSubscription = FirebaseFirestore.instance
+        .collection('kyc')
+        .doc(uid)
+        .snapshots()
+        .listen(
+          (snapshot) {
+            print('📨 KYC stream update received: exists=${snapshot.exists}');
+
+            if (mounted) {
+              if (snapshot.exists && snapshot.data() != null) {
+                try {
+                  final kyc = KYCModel.fromMap(
+                    snapshot.data()! as Map<String, dynamic>,
+                  );
+                  print('  📋 KYC status: ${kyc.verified}');
+                  setState(() {
+                    _kyc = kyc;
+                  });
+                } catch (e) {
+                  print('❌ KYC parsing error: $e');
+                }
+              } else {
+                print('  📋 KYC document does not exist');
+                setState(() {
+                  _kyc = null;
+                });
+              }
+            }
+          },
+          onError: (error) {
+            print('❌ KYC stream error: $error');
+          },
+        );
+  }
+
+  // 🔥 NEW: Manual refresh for button clicks
+  Future<void> _manualRefresh() async {
+    final user = _authService.currentUser;
+    if (user == null) return;
+
+    try {
+      print('🔄 Manual refresh started');
+      final uid = user.uid;
+
+      // Fetch KYC
+      final kycSnap = await FirebaseFirestore.instance
+          .collection('kyc')
+          .doc(uid)
+          .get();
+
+      if (kycSnap.exists && kycSnap.data() != null) {
+        final kyc = KYCModel.fromMap(kycSnap.data()!);
+        setState(() => _kyc = kyc);
+        print('✅ KYC refreshed: ${kyc.verified}');
+      }
+
+      // Fetch loans
+      final loansSnap = await FirebaseFirestore.instance
+          .collection('loans')
+          .where('userId', isEqualTo: uid)
+          .orderBy('createdAt', descending: true)
+          .get();
+
+      final loans = loansSnap.docs
+          .map((doc) => LoanModel.fromMap(doc.data()))
+          .toList();
+
+      setState(() => _loans = loans);
+      print('✅ Manual refresh completed: ${loans.length} loans');
+    } catch (e) {
+      print('❌ Manual refresh error: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Refresh failed: $e')));
+      }
+    }
   }
 
   // UI helpers
@@ -188,6 +290,12 @@ class _UserDashboardPageState extends State<UserDashboardPage> {
 
     // Return most recently approved loan
     return approvedLoans.first;
+  }
+
+  // 🔥 ADD: Refresh method for button
+  void _refreshData() {
+    print('🔄 Refresh button clicked');
+    _initData(refresh: true);
   }
 
   double _calculateLoanProgress() {
@@ -725,17 +833,78 @@ class _UserDashboardPageState extends State<UserDashboardPage> {
                   _buildNavItem(5, Icons.settings, 'Settings'),
                   _buildNavItem(6, Icons.help_outline, 'Help & Support'),
                   const Spacer(),
-                  if (kDebugMode)
+
+                  // 🔥 Debug info (only in debug mode)
+                  if (kDebugMode) ...[
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      margin: const EdgeInsets.only(bottom: 8),
+                      decoration: BoxDecoration(
+                        color: Colors.grey.shade100,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Debug Info:',
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 12,
+                            ),
+                          ),
+                          Text(
+                            'Loans: ${_loans.length}',
+                            style: TextStyle(fontSize: 10),
+                          ),
+                          Text(
+                            'KYC: ${_kyc?.verified ?? 'null'}',
+                            style: TextStyle(fontSize: 10),
+                          ),
+                        ],
+                      ),
+                    ),
                     TextButton(
                       onPressed: _devFlagKycVerified,
                       child: Text(
                         'DEV: verify KYC',
-                        style: TextStyle(color: Colors.grey.shade600),
+                        style: TextStyle(
+                          color: Colors.grey.shade600,
+                          fontSize: 12,
+                        ),
                       ),
                     ),
+                  ],
+
+                  // 🔥 NEW: Refresh button
                   Container(
                     width: double.infinity,
-                    margin: const EdgeInsets.only(top: 16),
+                    margin: const EdgeInsets.only(bottom: 16),
+                    child: ElevatedButton.icon(
+                      onPressed: _refreshData,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.blue.shade50,
+                        foregroundColor: Colors.blue.shade600,
+                        elevation: 0,
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      icon: const Icon(Icons.refresh, size: 20),
+                      label: Text(
+                        'Refresh Data',
+                        style: GoogleFonts.workSans(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ),
+
+                  // 🔥 UPDATED: Logout button (removed top margin since refresh button is above)
+                  Container(
+                    width: double.infinity,
                     child: ElevatedButton.icon(
                       onPressed: _showLogoutDialog,
                       style: ElevatedButton.styleFrom(
